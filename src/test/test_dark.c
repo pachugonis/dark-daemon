@@ -878,6 +878,178 @@ test_dark_client_resolves_names(void *arg)
   darknames_free_all();
 }
 
+/** A name is pinned to the address of the first connection made by it, and
+ * the pins are kept the way DarkNamesPinsOnDisk says. */
+static void
+test_dark_names_pins(void *arg)
+{
+  (void)arg;
+  or_options_t *options = get_options_mutable();
+  char *fname = NULL, *text = NULL;
+
+  use_names_directory("dark_names_pins");
+  options->DarkNamesPinsOnDisk = 1;
+  fname = get_datadir_fname2("dark_names", "pins");
+
+  tt_ptr_op(darknames_get_pin("site"), OP_EQ, NULL);
+  tt_assert(!darknames_forget_pin("site"));
+
+  /* The first connection pins the name, and a later one does not move it. */
+  darknames_note_connected("site", DARK_VECTOR_ADDRESS_SHOP);
+  tt_str_op(darknames_get_pin("site"), OP_EQ, DARK_VECTOR_ADDRESS_SHOP);
+  darknames_note_connected("site", DARK_VECTOR_ADDRESS_SITE);
+  tt_str_op(darknames_get_pin("site"), OP_EQ, DARK_VECTOR_ADDRESS_SHOP);
+  darknames_note_connected("shop", DARK_VECTOR_ADDRESS_SHOP);
+
+  text = read_file_to_str(fname, RFTS_BIN, NULL);
+  tt_str_op(text, OP_EQ, "shop " DARK_VECTOR_ADDRESS_SHOP "\n"
+                         "site " DARK_VECTOR_ADDRESS_SHOP "\n");
+  tor_free(text);
+
+  /* Pins outlast the process that made them. */
+  darknames_free_all();
+  tt_str_op(darknames_get_pin("site"), OP_EQ, DARK_VECTOR_ADDRESS_SHOP);
+
+  /* A pin that is forgotten is gone from the file too. */
+  tt_assert(darknames_forget_pin("site"));
+  tt_ptr_op(darknames_get_pin("site"), OP_EQ, NULL);
+  darknames_free_all();
+  tt_ptr_op(darknames_get_pin("site"), OP_EQ, NULL);
+  tt_str_op(darknames_get_pin("shop"), OP_EQ, DARK_VECTOR_ADDRESS_SHOP);
+
+  /* Kept in memory alone, the pins go on, and the file that listed the
+   * names does not stay behind. */
+  options->DarkNamesPinsOnDisk = 0;
+  tt_str_op(darknames_get_pin("shop"), OP_EQ, DARK_VECTOR_ADDRESS_SHOP);
+  tt_int_op(file_status(fname), OP_EQ, FN_NOENT);
+  darknames_note_connected("site", DARK_VECTOR_ADDRESS_SITE);
+  tt_str_op(darknames_get_pin("site"), OP_EQ, DARK_VECTOR_ADDRESS_SITE);
+  tt_int_op(file_status(fname), OP_EQ, FN_NOENT);
+  /* They end with the process. */
+  darknames_free_all();
+  tt_ptr_op(darknames_get_pin("site"), OP_EQ, NULL);
+  tt_ptr_op(darknames_get_pin("shop"), OP_EQ, NULL);
+
+  /* A file left over from before is removed when the process starts so. */
+  tt_int_op(write_str_to_file(fname, "site " DARK_VECTOR_ADDRESS_SHOP "\n", 1),
+            OP_EQ, 0);
+  darknames_free_all();
+  tt_ptr_op(darknames_get_pin("site"), OP_EQ, NULL);
+  tt_int_op(file_status(fname), OP_EQ, FN_NOENT);
+
+  /* A damaged file gives what pins it still has. Of two for one name the
+   * first stands. */
+  options->DarkNamesPinsOnDisk = 1;
+  darknames_free_all();
+  tt_int_op(write_str_to_file(fname,
+                              "site " DARK_VECTOR_ADDRESS_SHOP "\n"
+                              "not a pin at all\n"
+                              "shop tooshort\n"
+                              "blog " DARK_VECTOR_ADDRESS_SITE "\n"
+                              "site " DARK_VECTOR_ADDRESS_SITE "\n"
+                              "cut short", 1), OP_EQ, 0);
+  setup_full_capture_of_logs(LOG_WARN);
+  tt_str_op(darknames_get_pin("site"), OP_EQ, DARK_VECTOR_ADDRESS_SHOP);
+  tt_str_op(darknames_get_pin("blog"), OP_EQ, DARK_VECTOR_ADDRESS_SITE);
+  tt_ptr_op(darknames_get_pin("shop"), OP_EQ, NULL);
+  expect_single_log_msg_containing("Passed over 4 lines");
+  teardown_capture_of_logs();
+
+ done:
+  teardown_capture_of_logs();
+  darknames_free_all();
+  tor_free(fname);
+  tor_free(text);
+}
+
+/** Make the request for <b>host</b> on a new connection, which is expected
+ * to go on as a request for a service. Return the connection. */
+static entry_connection_t *
+request_by_name(const char *host)
+{
+  entry_connection_t *conn = entry_connection_new(CONN_TYPE_AP, AF_INET);
+  conn->socks_request->command = SOCKS_COMMAND_CONNECT;
+  conn->socks_request->port = 80;
+  strlcpy(conn->socks_request->address, host,
+          sizeof(conn->socks_request->address));
+  conn->entry_cfg.onion_traffic = 1;
+  ENTRY_TO_CONN(conn)->state = AP_CONN_STATE_SOCKS_WAIT;
+  int r = connection_ap_handshake_rewrite_and_attach(conn, NULL, NULL);
+  tor_assert(r == 0);
+  return conn;
+}
+
+/** The registry may say that a name leads elsewhere; a client that has been
+ * to the name does not follow until the user says so. */
+static void
+test_dark_client_holds_names_to_pins(void *arg)
+{
+  (void)arg;
+  or_options_t *options = get_options_mutable();
+  entry_connection_t *conn = NULL;
+
+  use_names_directory("dark_client_holds_names_to_pins");
+  options->DarkNamesPinsOnDisk = 1;
+  options->DarkNamesRootKey = tor_strdup(DARK_VECTOR_ROOT_KEY);
+  write_snapshot_file(DARK_VECTOR_VALID);
+  addressmap_init();
+  hs_cache_init();
+
+  /* Resolving a name pins nothing: no connection has been made yet. */
+  conn = request_by_name("www.site.dark");
+  tt_str_op(conn->socks_request->address, OP_EQ, DARK_VECTOR_ADDRESS_SHOP);
+  tt_str_op(conn->dark_name, OP_EQ, "site");
+  tt_ptr_op(darknames_get_pin("site"), OP_EQ, NULL);
+  /* Then it is made, which the relay code tells us like this. */
+  darknames_note_connected(conn->dark_name, conn->socks_request->address);
+  tt_str_op(darknames_get_pin("site"), OP_EQ, DARK_VECTOR_ADDRESS_SHOP);
+  connection_free_minimal(ENTRY_TO_CONN(conn));
+  conn = NULL;
+
+  /* A request by address is not one by name. */
+  conn = request_by_name(DARK_VECTOR_ADDRESS_SHOP ".dark");
+  tt_ptr_op(conn->dark_name, OP_EQ, NULL);
+  connection_free_minimal(ENTRY_TO_CONN(conn));
+  conn = NULL;
+
+  /* The registry moves the name. */
+  update_approx_time(DARK_VECTOR_CREATED + 60);
+  write_snapshot_file(DARK_VECTOR_MOVED);
+
+  MOCK(connection_mark_unattached_ap_, mock_connection_mark_unattached_ap_);
+  setup_full_capture_of_logs(LOG_INFO);
+  tt_int_op(request_destination(SOCKS_COMMAND_CONNECT, "site.dark", false),
+            OP_EQ, -1);
+  tt_int_op(n_marked_unattached, OP_EQ, 1);
+  tt_int_op(marked_end_reason & END_STREAM_REASON_MASK, OP_EQ,
+            END_STREAM_REASON_ENTRYPOLICY);
+  /* The log says that it happened, and not to which name. */
+  expect_log_msg_containing("the registry now gives it another address");
+  expect_no_log_msg_containing("site.dark");
+  teardown_capture_of_logs();
+  UNMOCK(connection_mark_unattached_ap_);
+  /* Other names resolve as before. */
+  conn = request_by_name("shop.dark");
+  connection_free_minimal(ENTRY_TO_CONN(conn));
+  conn = NULL;
+
+  /* The user accepts the change: the next connection pins the name anew. */
+  tt_assert(darknames_forget_pin("site"));
+  conn = request_by_name("site.dark");
+  tt_str_op(conn->socks_request->address, OP_EQ, DARK_VECTOR_ADDRESS_SITE);
+  darknames_note_connected(conn->dark_name, conn->socks_request->address);
+  tt_str_op(darknames_get_pin("site"), OP_EQ, DARK_VECTOR_ADDRESS_SITE);
+
+ done:
+  teardown_capture_of_logs();
+  UNMOCK(connection_mark_unattached_ap_);
+  if (conn)
+    connection_free_minimal(ENTRY_TO_CONN(conn));
+  addressmap_free_all();
+  hs_free_all();
+  darknames_free_all();
+}
+
 #define DARK_TEST(name, flags)                          \
   { #name, test_dark_ ##name, (flags), NULL, NULL }
 
@@ -896,5 +1068,7 @@ struct testcase_t dark_tests[] = {
   DARK_TEST(names_lookup, TT_FORK),
   DARK_TEST(names_are_not_logged, TT_FORK),
   DARK_TEST(client_resolves_names, TT_FORK),
+  DARK_TEST(names_pins, TT_FORK),
+  DARK_TEST(client_holds_names_to_pins, TT_FORK),
   END_OF_TESTCASES
 };

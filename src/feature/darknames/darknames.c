@@ -12,6 +12,10 @@
  * Its other implementation is in Python, and both are tested against the
  * same vectors.
  *
+ * A name is pinned to the address that it led to when a connection by that
+ * name was first made. The registry can say later that the name leads
+ * elsewhere; we do not follow it there until the user says so.
+ *
  * Nothing in this file may log a name. The addresses and counts that it does
  * log say nothing about what the user asked for.
  **/
@@ -24,8 +28,10 @@
 #include "app/config/config.h"
 #include "feature/hs/hs_common.h"
 #include "lib/container/map.h"
+#include "lib/container/smartlist.h"
 #include "lib/crypt_ops/crypto_ed25519.h"
 #include "lib/crypt_ops/crypto_format.h"
+#include "lib/fs/dir.h"
 #include "lib/fs/files.h"
 #include "lib/log/ratelim.h"
 #include "lib/wallclock/approx_time.h"
@@ -609,12 +615,166 @@ darknames_lookup(const char *name, char *address_out)
   return darknames_snapshot_lookup(current_snapshot, name, now, address_out);
 }
 
+/** Map from a name to the address that it is pinned to, or NULL if the pins
+ * have not been loaded. */
+static strmap_t *pins = NULL;
+/** Whether the pins are kept in a file: the value that DarkNamesPinsOnDisk
+ * had when we last looked. */
+static int pins_on_disk = -1;
+
+/** Read the pins from their file into <b>pins</b>. A line that is not a pin
+ * is passed over: what a damaged file has lost, it has lost. */
+static void
+pins_read(void)
+{
+  char *fname = get_datadir_fname2("dark_names", "pins");
+  char *text = read_file_to_str(fname, RFTS_BIN | RFTS_IGNORE_MISSING, NULL);
+  int n_bad = 0;
+
+  if (text) {
+    const char *cp = text, *end = text + strlen(text);
+    field_t f[MAX_FIELDS];
+    int n;
+    while (cp < end) {
+      char name[DARKNAME_MAX_LEN + 1];
+      if (!next_line(&cp, end, f, &n)) {
+        /* Not a whole line: there is no more to read. */
+        ++n_bad;
+        break;
+      }
+      if (n != 2 || f[0].len > DARKNAME_MAX_LEN ||
+          !field_to_str(&f[0], f[0].len, name, sizeof(name)) ||
+          !darknames_name_is_valid(name) ||
+          !field_is_spelled_in(&f[1], HS_SERVICE_ADDR_LEN_BASE32,
+                               "abcdefghijklmnopqrstuvwxyz234567") ||
+          strmap_get(pins, name)) {
+        ++n_bad;
+        continue;
+      }
+      strmap_set(pins, name, tor_strndup(f[1].s, f[1].len));
+    }
+  }
+  if (n_bad)
+    log_warn(LD_GENERAL, "Passed over %d lines of %s that are not pins. "
+             "The names on them are not pinned any more.",
+             n_bad, escaped(fname));
+  tor_free(text);
+  tor_free(fname);
+}
+
+/** Write <b>pins</b> to their file, replacing it as a whole. */
+static void
+pins_write(void)
+{
+  char *directory = get_datadir_fname("dark_names");
+  char *fname = get_datadir_fname2("dark_names", "pins");
+  smartlist_t *lines = smartlist_new();
+  char *text;
+
+  STRMAP_FOREACH(pins, name, const char *, address) {
+    smartlist_add_asprintf(lines, "%s %s\n", name, address);
+  } STRMAP_FOREACH_END;
+  smartlist_sort_strings(lines);
+  text = smartlist_join_strings(lines, "", 0, NULL);
+
+  if (check_private_dir(directory, CPD_CREATE, NULL) < 0 ||
+      write_str_to_file(fname, text, 1) < 0)
+    log_warn(LD_GENERAL, "Could not write %s. Names pinned in this run will "
+             "be forgotten when it ends.", escaped(fname));
+
+  SMARTLIST_FOREACH(lines, char *, line, tor_free(line));
+  smartlist_free(lines);
+  tor_free(text);
+  tor_free(fname);
+  tor_free(directory);
+}
+
+/** Remove the file of pins, if there is one. It lists the names that the
+ * user has been to, and whoever keeps pins in memory alone has asked for
+ * that not to be on a disk. */
+static void
+pins_remove_file(void)
+{
+  char *fname = get_datadir_fname2("dark_names", "pins");
+  if (file_status(fname) == FN_FILE) {
+    if (tor_unlink(fname) < 0)
+      log_warn(LD_GENERAL, "Could not remove %s.", escaped(fname));
+    else
+      log_notice(LD_GENERAL, "Removed %s: pins are kept in memory only.",
+                 escaped(fname));
+  }
+  tor_free(fname);
+}
+
+/** Return the pins, loaded and stored as DarkNamesPinsOnDisk says. */
+static strmap_t *
+get_pins(void)
+{
+  const int on_disk = get_options()->DarkNamesPinsOnDisk;
+  if (!pins) {
+    pins = strmap_new();
+    pins_on_disk = on_disk;
+    if (on_disk)
+      pins_read();
+    else
+      pins_remove_file();
+  } else if (on_disk != pins_on_disk) {
+    pins_on_disk = on_disk;
+    if (on_disk)
+      pins_write();
+    else
+      pins_remove_file();
+  }
+  return pins;
+}
+
+/** Return the address that <b>name</b> is pinned to, or NULL if it is not
+ * pinned. The string lasts until the pins change. */
+const char *
+darknames_get_pin(const char *name)
+{
+  return strmap_get(get_pins(), name);
+}
+
+/** A connection that was asked for by <b>name</b> has been made to
+ * <b>address</b>. If the name is not pinned yet, pin it there.
+ *
+ * A name is pinned when a connection is made, and not when the name is
+ * resolved: an address that never answered is not one to hold a name to. */
+void
+darknames_note_connected(const char *name, const char *address)
+{
+  strmap_t *map = get_pins();
+  if (strmap_get(map, name))
+    return;
+  strmap_set(map, name, tor_strdup(address));
+  if (pins_on_disk)
+    pins_write();
+}
+
+/** Forget what <b>name</b> is pinned to, so that the address it leads to
+ * next is the one it gets pinned to. Return true iff it was pinned. */
+bool
+darknames_forget_pin(const char *name)
+{
+  strmap_t *map = get_pins();
+  char *address = strmap_remove(map, name);
+  if (!address)
+    return false;
+  tor_free(address);
+  if (pins_on_disk)
+    pins_write();
+  return true;
+}
+
 /** Free all storage held in this file. */
 void
 darknames_free_all(void)
 {
   darknames_snapshot_free(current_snapshot);
   tor_free(current_root_key);
+  strmap_free(pins, tor_free_);
+  pins_on_disk = -1;
   last_checked = 0;
   examined_tail[0] = '\0';
 }

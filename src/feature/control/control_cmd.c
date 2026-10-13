@@ -32,6 +32,7 @@
 #include "feature/control/control_events.h"
 #include "feature/control/control_getinfo.h"
 #include "feature/control/control_proto.h"
+#include "feature/darknames/darknames.h"
 #include "feature/hs/hs_config.h"
 #include "feature/hs/hs_control.h"
 #include "feature/hs/hs_service.h"
@@ -1997,6 +1998,28 @@ add_onion_helper_keyarg(const char *arg, int discard_pk,
   return ret;
 }
 
+static const control_cmd_syntax_t darkname_accept_syntax = {
+  .min_args = 1, .max_args = 1,
+};
+
+/** Called when we get a DARKNAME_ACCEPT command. The registry gives a name
+ * another address than the one it is pinned to, and the user knows why:
+ * forget the pin, so that the next connection by that name pins it anew. */
+static int
+handle_control_darkname_accept(control_connection_t *conn,
+                               const control_cmd_args_t *args)
+{
+  const char *name = smartlist_get(args->args, 0);
+
+  if (!darknames_name_is_valid(name))
+    control_write_endreply(conn, 512, "Not a name");
+  else if (!darknames_forget_pin(name))
+    control_write_endreply(conn, 552, "That name is not pinned");
+  else
+    send_control_done(conn);
+  return 0;
+}
+
 static const control_cmd_syntax_t del_onion_syntax = {
   .min_args = 1, .max_args = 1,
 };
@@ -2197,6 +2220,7 @@ static const control_cmd_def_t CONTROL_COMMANDS[] =
   MULTLINE(hspost, 0),
   ONE_LINE(add_onion, CMD_FL_WIPE),
   ONE_LINE(del_onion, CMD_FL_WIPE),
+  ONE_LINE(darkname_accept, 0),
   ONE_LINE(onion_client_auth_add, CMD_FL_WIPE),
   ONE_LINE(onion_client_auth_remove, 0),
   ONE_LINE(onion_client_auth_view, 0),

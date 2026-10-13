@@ -34,6 +34,9 @@ struct entry_connection_t {
 
   /** AP only: The original requested address before we rewrote it. */
   char *original_dest_address;
+  /** AP only: The registered name that this connection was asked for by, if
+   * it was asked for by one. */
+  char *dark_name;
   /* Other fields to isolate on already exist.  The ClientAddr is addr.  The
      ClientProtocol is a combination of type and socks_request->
      socks_version.  SocksAuth is socks_request->username/password.

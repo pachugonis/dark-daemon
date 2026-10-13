@@ -34,6 +34,11 @@ typedef enum darkname_result_t {
 bool darknames_name_is_valid(const char *name);
 bool darknames_root_key_is_valid(const char *base64);
 darkname_result_t darknames_lookup(const char *name, char *address_out);
+
+const char *darknames_get_pin(const char *name);
+void darknames_note_connected(const char *name, const char *address);
+bool darknames_forget_pin(const char *name);
+
 void darknames_free_all(void);
 
 #ifdef DARKNAMES_PRIVATE

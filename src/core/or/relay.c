@@ -49,6 +49,7 @@
 #define RELAY_PRIVATE
 #include "core/or/or.h"
 #include "feature/client/addressmap.h"
+#include "feature/darknames/darknames.h"
 #include "lib/err/backtrace.h"
 #include "lib/buf/buffers.h"
 #include "core/or/channel.h"
@@ -1490,6 +1491,11 @@ connection_edge_process_relay_cell_not_open(
       remap_event_helper(entry_conn, &addr);
     }
     circuit_log_path(LOG_INFO,LD_APP,TO_ORIGIN_CIRCUIT(circ));
+    /* A connection that was asked for by name has been made: from now on
+     * the name is expected to lead to this address. */
+    if (entry_conn->dark_name)
+      darknames_note_connected(entry_conn->dark_name,
+                               entry_conn->socks_request->address);
     /* don't send a socks reply to transparent conns */
     tor_assert(entry_conn->socks_request != NULL);
     if (!entry_conn->socks_request->has_finished) {

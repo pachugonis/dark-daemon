@@ -2174,10 +2174,11 @@ connection_ap_resolve_dark_name(entry_connection_t *conn,
                                 socks_request_t *socks)
 {
   static ratelim_t unavailable_limit = RATELIM_INIT(60*15);
+  static ratelim_t changed_limit = RATELIM_INIT(60*15);
   char name[DARKNAME_MAX_LEN + 1];
   char resolved[HS_SERVICE_ADDR_LEN_BASE32 + 1];
   char *suffix = strrchr(socks->address, '.');
-  const char *label;
+  const char *label, *pinned;
   int reason;
 
   /* The name is the last label before the suffix. */
@@ -2191,12 +2192,31 @@ connection_ap_resolve_dark_name(entry_connection_t *conn,
     case DARKNAME_FOUND:
       /* The snapshot holds addresses as they were registered, so this one
        * is checked like any that a user types. */
-      if (hs_address_is_valid(resolved)) {
-        strlcpy(socks->address, resolved, sizeof(socks->address));
-        return 0;
+      if (!hs_address_is_valid(resolved))
+        goto not_found;
+      /* The registry says where the name leads now. If a connection by this
+       * name was made before, it is the address of that connection that we
+       * hold the name to, until the user tells us otherwise. */
+      pinned = darknames_get_pin(name);
+      if (pinned && strcmp(pinned, resolved)) {
+        control_event_client_status(LOG_WARN,
+                                    "DARK_NAME_CHANGED NAME=%s PINNED=%s "
+                                    "ADDRESS=%s", name, pinned, resolved);
+        log_fn_ratelim(&changed_limit, LOG_WARN, LD_APP,
+                       "Refusing a request for a name: the registry now gives "
+                       "it another address than the one it was first used "
+                       "with. If the service is known to have moved, accept "
+                       "the change with the DARKNAME_ACCEPT control command.");
+        reason = END_STREAM_REASON_ENTRYPOLICY;
+        break;
       }
-      FALLTHROUGH;
+      /* Remember the name, to pin it once the connection is made. */
+      tor_str_wipe_and_free(conn->dark_name);
+      conn->dark_name = tor_strdup(name);
+      strlcpy(socks->address, resolved, sizeof(socks->address));
+      return 0;
     case DARKNAME_NOT_FOUND:
+    not_found:
       log_info(LD_APP, "Refusing a request for a name that is not "
                "registered.");
       socks->socks_extended_error_code = SOCKS5_HS_NOT_FOUND;

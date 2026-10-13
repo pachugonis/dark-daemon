@@ -893,6 +893,7 @@ connection_free_minimal(connection_t *conn)
     entry_connection_t *entry_conn = TO_ENTRY_CONN(conn);
     tor_str_wipe_and_free(entry_conn->chosen_exit_name);
     tor_str_wipe_and_free(entry_conn->original_dest_address);
+    tor_str_wipe_and_free(entry_conn->dark_name);
     if (entry_conn->socks_request)
       socks_request_free(entry_conn->socks_request);
     if (entry_conn->pending_optimistic_data) {

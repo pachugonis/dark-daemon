@@ -87,6 +87,21 @@ static const char DARK_VECTOR_SHORT_CERTIFICATE[] =
   "soon nqvipb7cbqsbniuyj745ljpgjvfxnntuvmxebnef2u4qqrjgzql5kfqd 1800086400 zqXQaerrW644WwcW7GaYRu2VqQxULwsCHDxMHfaWoh4 1\n"
   "signature eKzqVzJ8thCZZe5OEfoYJh/7xaUiQM2Oz8U48QaIV6SZ4gzcDpBNBhlWffXaacrnZy9kMzevxsbbzClKp1ZPBQ\n";
 
+static const char DARK_VECTOR_MOVED[] =
+  "dark-names-snapshot 1\n"
+  "signing-key eZ2gzMjeIEgcao6yUzk6NnR0wU8VRcmllmNpsV28KJ8 1807776000 AnWdIhWne7YCrEAiwqINR5vZYex2NMLT+iq5wH02da2nJIQXxbTC69zmjPMXNUqlji4rh+iAlbf5ABpxwgCkAg\n"
+  "head 13 f07573cf86cf8e7f7cc9f147ce8526a00bd8cdf963a095fc48a75e5761562b3c\n"
+  "created 1800000060\n"
+  "valid-until 1801209660\n"
+  "names 6\n"
+  "head nqvipb7cbqsbniuyj745ljpgjvfxnntuvmxebnef2u4qqrjgzql5kfqd 1825920000 zqXQaerrW644WwcW7GaYRu2VqQxULwsCHDxMHfaWoh4 1\n"
+  "names nqvipb7cbqsbniuyj745ljpgjvfxnntuvmxebnef2u4qqrjgzql5kfqd 1825920000 zqXQaerrW644WwcW7GaYRu2VqQxULwsCHDxMHfaWoh4 1\n"
+  "shop p7d3utxod2jo23qpvsowsynqdosqaynltu6r62xe752obcwrkoxusjad 1825920000 AhpkgPIBBA9cNB4+uG1EJbRMwkguYdlilC6+KGzgiSQ 1\n"
+  "signature nqvipb7cbqsbniuyj745ljpgjvfxnntuvmxebnef2u4qqrjgzql5kfqd 1825920000 zqXQaerrW644WwcW7GaYRu2VqQxULwsCHDxMHfaWoh4 1\n"
+  "site nqvipb7cbqsbniuyj745ljpgjvfxnntuvmxebnef2u4qqrjgzql5kfqd 1828512000 AhpkgPIBBA9cNB4+uG1EJbRMwkguYdlilC6+KGzgiSQ 4\n"
+  "soon nqvipb7cbqsbniuyj745ljpgjvfxnntuvmxebnef2u4qqrjgzql5kfqd 1800086400 zqXQaerrW644WwcW7GaYRu2VqQxULwsCHDxMHfaWoh4 1\n"
+  "signature fDVoKewfI0nB1XfwksNbQ1c2+xYjpgoznj+YFg1JTojMRm6q9lDrV4uyk0LZUBro5tYjMTNINMClQTUD0AOtCQ\n";
+
 static const char DARK_VECTOR_UNSORTED[] =
   "dark-names-snapshot 1\n"
   "signing-key eZ2gzMjeIEgcao6yUzk6NnR0wU8VRcmllmNpsV28KJ8 1807776000 AnWdIhWne7YCrEAiwqINR5vZYex2NMLT+iq5wH02da2nJIQXxbTC69zmjPMXNUqlji4rh+iAlbf5ABpxwgCkAg\n"

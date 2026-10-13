@@ -404,6 +404,7 @@ static const config_var_t option_vars_[] = {
   V(CookieAuthFile,              FILENAME, NULL),
   V(CountPrivateBandwidth,       BOOL,     "0"),
   VAR_IMMUTABLE("DataDirectory", FILENAME, DataDirectory_option, NULL),
+  V(DarkNamesPinsOnDisk,         BOOL,     "1"),
   V(DarkNamesRootKey,            STRING,   NULL),
   V(DataDirectoryGroupReadable,  BOOL,     "0"),
   V(DisableOOSCheck,             BOOL,     "1"),

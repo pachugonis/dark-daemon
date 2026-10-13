@@ -561,6 +561,9 @@ struct or_options_t {
   /** The root key of the name registry to trust, in base64, if not the one
    * that this build was made with. */
   char *DarkNamesRootKey;
+  /** Whether the addresses that names are pinned to are kept in a file. It
+   * lists the names that the user has been to. */
+  int DarkNamesPinsOnDisk;
 
   char *CookieAuthFile; /**< Filesystem location of a ControlPort
                          *   authentication cookie. */
