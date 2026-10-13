@@ -101,7 +101,7 @@ mock_write_str_to_file(const char *path, const char *str, int bin)
   (void)bin;
   tt_str_op(path, OP_EQ, "/double/five"PATH_SEPARATOR"squared");
   tt_str_op(str, OP_EQ,
-           "25njqamcweflpvkl73j4szahhihoc4xt3ktcgjnpaingr5yhkenl5sid.onion\n");
+           "25njqamcweflpvkl73j4szahhihoc4xt3ktcgjnpaingr5yhkenl5sid.dark\n");
 
  done:
   return 0;
@@ -799,18 +799,21 @@ test_parse_extended_hostname(void *arg)
   (void) arg;
   hostname_type_t type;
 
-  char address1[] = "fooaddress.onion";
+  char address1[] = "fooaddress.dark";
   char address3[] = "fooaddress.exit";
   char address4[] = "www.torproject.org";
-  char address5[] = "foo.abcdefghijklmnop.onion";
-  char address6[] = "foo.bar.abcdefghijklmnop.onion";
-  char address7[] = ".abcdefghijklmnop.onion";
+  char address5[] = "foo.abcdefghijklmnop.dark";
+  char address6[] = "foo.bar.abcdefghijklmnop.dark";
+  char address7[] = ".abcdefghijklmnop.dark";
   char address8[] =
-    "www.25njqamcweflpvkl73j4szahhihoc4xt3ktcgjnpaingr5yhkenl5sid.onion";
+    "www.25njqamcweflpvkl73j4szahhihoc4xt3ktcgjnpaingr5yhkenl5sid.dark";
   char address9[] =
-    "www.15njqamcweflpvkl73j4szahhihoc4xt3ktcgjnpaingr5yhkenl5sid.onion";
+    "www.15njqamcweflpvkl73j4szahhihoc4xt3ktcgjnpaingr5yhkenl5sid.dark";
   char address10[] =
-    "15njqamcweflpvkl73j4szahhihoc4xt3ktcgjnpaingr5yhkenl5sid7jdl.onion";
+    "15njqamcweflpvkl73j4szahhihoc4xt3ktcgjnpaingr5yhkenl5sid7jdl.dark";
+  char address11[] =
+    "25njqamcweflpvkl73j4szahhihoc4xt3ktcgjnpaingr5yhkenl5sid.onion";
+  char address12[] = "fooaddress.onion";
 
   tt_assert(!parse_extended_hostname(address1, &type));
   tt_int_op(type, OP_EQ, BAD_HOSTNAME);
@@ -841,6 +844,16 @@ test_parse_extended_hostname(void *arg)
 
   /* Invalid v3 address: too long */
   tt_assert(!parse_extended_hostname(address10, &type));
+  tt_int_op(type, OP_EQ, BAD_HOSTNAME);
+
+  /* .onion is rejected outright, even with a well-formed v3 address, and is
+   * left untouched rather than handled as a normal hostname. */
+  tt_assert(!parse_extended_hostname(address11, &type));
+  tt_int_op(type, OP_EQ, BAD_HOSTNAME);
+  tt_str_op(address11, OP_EQ,
+            "25njqamcweflpvkl73j4szahhihoc4xt3ktcgjnpaingr5yhkenl5sid.onion");
+
+  tt_assert(!parse_extended_hostname(address12, &type));
   tt_int_op(type, OP_EQ, BAD_HOSTNAME);
 
  done: ;

@@ -1250,7 +1250,7 @@ connection_ap_expire_beginning(void)
       if (seconds_idle >= options->SocksTimeout) {
         log_fn(severity, LD_REND,
                "Rend stream is %d seconds late. Giving up on address"
-               " '%s.onion'.",
+               " '%s." HS_ADDRESS_TLD "'.",
                seconds_idle,
                safe_str_client(entry_conn->socks_request->address));
         /* Roll back path bias use state so that we probe the circuit
@@ -1696,16 +1696,20 @@ consider_plaintext_ports(entry_connection_t *conn, uint16_t port)
  *
  * The possible recognized forms are (where true is returned):
  *
- *  If address is of the form "y.onion" with a well-formed handle y:
+ *  If address is of the form "y.dark" with a well-formed handle y:
  *     Put a NUL after y, lower-case it, and return ONION_V3_HOSTNAME
  *     depending on the HS version.
  *
- *  If address is of the form "x.y.onion" with a well-formed handle x:
+ *  If address is of the form "x.y.dark" with a well-formed handle x:
  *     Drop "x.", put a NUL after y, lower-case it, and return
  *     ONION_V3_HOSTNAME depending on the HS version.
  *
- * If address is of the form "y.onion" with a badly-formed handle y:
+ * If address is of the form "y.dark" with a badly-formed handle y:
  *     Return BAD_HOSTNAME and log a message.
+ *
+ * If address is of the form "y.onion":
+ *     Return BAD_HOSTNAME and log a message. This network has no .onion
+ *     services, and such a name must never be handled as a normal hostname.
  *
  * If address is of the form "y.exit":
  *     Put a NUL after y and return EXIT_HOSTNAME.
@@ -1730,12 +1734,16 @@ parse_extended_hostname(char *address, hostname_type_t *type_out)
     *type_out = EXIT_HOSTNAME; /* .exit */
     goto success;
   }
-  if (strcmp(s+1,"onion")) {
-    *type_out = NORMAL_HOSTNAME; /* neither .exit nor .onion, thus normal */
+  if (!strcmp(s+1,"onion")) {
+    *type_out = BAD_HOSTNAME; /* never let .onion through as a normal name */
+    goto failed;
+  }
+  if (strcmp(s+1,HS_ADDRESS_TLD)) {
+    *type_out = NORMAL_HOSTNAME; /* neither .exit nor .dark, thus normal */
     goto success;
   }
 
-  /* so it is .onion */
+  /* so it is .dark */
   *s = 0; /* NUL-terminate it */
   /* locate a 'sub-domain' component, in order to remove it */
   q = strrchr(address, '.');

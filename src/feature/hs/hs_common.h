@@ -49,6 +49,9 @@ struct ed25519_keypair_t;
 /** String prefix for the signature of ESTABLISH_INTRO */
 #define ESTABLISH_INTRO_SIG_PREFIX "Tor establish-intro cell v1"
 
+/** Top-level domain of a service address, without the leading dot. */
+#define HS_ADDRESS_TLD "dark"
+
 /** Prefix of the onion address checksum. */
 #define HS_SERVICE_ADDR_CHECKSUM_PREFIX ".onion checksum"
 /** Length of the checksum prefix minus the NUL terminated byte. */
