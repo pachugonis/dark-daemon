@@ -558,6 +558,10 @@ struct or_options_t {
 
   int CookieAuthentication; /**< Boolean: do we enable cookie-based auth for
                              * the control system? */
+  /** The root key of the name registry to trust, in base64, if not the one
+   * that this build was made with. */
+  char *DarkNamesRootKey;
+
   char *CookieAuthFile; /**< Filesystem location of a ControlPort
                          *   authentication cookie. */
   char *ExtORPortCookieAuthFile; /**< Filesystem location of Extended

@@ -388,6 +388,7 @@ noinst_HEADERS+= \
 	src/test/test_descriptors.inc \
 	src/test/example_extrainfo.inc \
 	src/test/failing_routerdescs.inc \
+	src/test/dark_names_vectors.inc \
 	src/test/ed25519_vectors.inc \
 	src/test/cgo_vectors.inc \
 	src/test/test_descriptors.inc \

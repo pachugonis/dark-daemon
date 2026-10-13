@@ -9,10 +9,12 @@
 #define CIRCUITLIST_PRIVATE
 #define CONFIG_PRIVATE
 #define CONNECTION_PRIVATE
+#define DARKNAMES_PRIVATE
 #define PROCESS_DESCS_PRIVATE
 
 #include "core/or/or.h"
 #include "test/test.h"
+#include "test/log_test_helpers.h"
 
 #include "app/config/config.h"
 #include "app/config/or_options_st.h"
@@ -27,13 +29,21 @@
 #include "core/or/relay_msg_st.h"
 #include "core/or/socks_request_st.h"
 #include "feature/client/addressmap.h"
+#include "feature/darknames/darknames.h"
 #include "feature/dirauth/process_descs.h"
 #include "feature/nodelist/routerinfo.h"
 #include "feature/nodelist/routerinfo_st.h"
 #include "feature/relay/routermode.h"
 #include "lib/crypt_ops/crypto_curve25519.h"
+#include "lib/crypt_ops/crypto_ed25519.h"
+#include "lib/crypt_ops/crypto_format.h"
 #include "lib/crypt_ops/crypto_rsa.h"
 #include "lib/encoding/confline.h"
+#include "lib/fs/dir.h"
+#include "lib/fs/files.h"
+#include "lib/wallclock/approx_time.h"
+
+#include "test/dark_names_vectors.inc"
 
 /* What the last cell sent from the edge of a circuit was. */
 static int n_cells_sent;
@@ -352,6 +362,389 @@ test_dark_client_resolves_literal_address(void *arg)
   addressmap_free_all();
 }
 
+/** The root key that the vectors were made with. */
+static const ed25519_public_key_t *
+vector_root_key(void)
+{
+  static ed25519_public_key_t key;
+  tor_assert(ed25519_public_from_base64(&key, DARK_VECTOR_ROOT_KEY) == 0);
+  return &key;
+}
+
+/** Parse the snapshot <b>text</b> as of the time <b>now</b>. */
+static darknames_snapshot_t *
+parse_vector(const char *text, time_t now,
+             const darknames_freshness_t *accepted, const char **problem)
+{
+  return darknames_snapshot_parse(text, strlen(text), vector_root_key(), now,
+                                  accepted, problem);
+}
+
+/** Which names may be registered. The registry in Python has the same list
+ * in its tests: the two must agree on every one. */
+static void
+test_dark_names_validity(void *arg)
+{
+  (void)arg;
+  static const char *valid[] = {
+    "abc", "site", "a-b", "a1b2", "3com", "ab-c-d", "a--b", "abc--d",
+    "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  };
+  static const char *invalid[] = {
+    "", "a", "ab", "Site", "-ab", "ab-", "a_b", "a.b", "a b", "ab--cd",
+    "xn--80ak6aa92e", "abc\n", "\xd1\x81\xd0\xb0\xd0\xb9\xd1\x82",
+    "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  };
+
+  for (unsigned i = 0; i < ARRAY_LENGTH(valid); ++i)
+    tt_assert(darknames_name_is_valid(valid[i]));
+  for (unsigned i = 0; i < ARRAY_LENGTH(invalid); ++i)
+    tt_assert(!darknames_name_is_valid(invalid[i]));
+
+  tt_assert(darknames_root_key_is_valid(DARK_VECTOR_ROOT_KEY));
+  tt_assert(!darknames_root_key_is_valid(""));
+  tt_assert(!darknames_root_key_is_valid(DARK_VECTOR_ROOT_KEY "="));
+  tt_assert(!darknames_root_key_is_valid(DARK_VECTOR_ROOT_KEY "A"));
+  /* One character short, and stray bits in the last character. */
+  tt_assert(!darknames_root_key_is_valid(
+                          "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"));
+  tt_assert(!darknames_root_key_is_valid(
+                          "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB"));
+
+ done:
+  ;
+}
+
+/** A snapshot that the registry signed is accepted, and names resolve from
+ * it for as long as it and they are in force. */
+static void
+test_dark_names_snapshot(void *arg)
+{
+  (void)arg;
+  const time_t created = DARK_VECTOR_CREATED;
+  const char *problem = "unset";
+  char address[HS_SERVICE_ADDR_LEN_BASE32 + 1];
+  darknames_snapshot_t *snapshot = NULL;
+  static const char *keywords[] = { "signature", "names", "head" };
+
+  snapshot = parse_vector(DARK_VECTOR_VALID, created, NULL, &problem);
+  tt_assert(snapshot);
+  tt_ptr_op(problem, OP_EQ, NULL);
+  tt_int_op(darknames_snapshot_n_names(snapshot), OP_EQ, 6);
+
+#define LOOKUP(name, now) \
+  darknames_snapshot_lookup(snapshot, (name), (now), address)
+
+  tt_int_op(LOOKUP("site", created), OP_EQ, DARKNAME_FOUND);
+  tt_str_op(address, OP_EQ, DARK_VECTOR_ADDRESS_SHOP);
+  tt_int_op(LOOKUP("nosuch", created), OP_EQ, DARKNAME_NOT_FOUND);
+  /* A name is found whole, and not by how it begins. */
+  tt_int_op(LOOKUP("sit", created), OP_EQ, DARKNAME_NOT_FOUND);
+  tt_int_op(LOOKUP("sites", created), OP_EQ, DARKNAME_NOT_FOUND);
+
+  /* Names that are spelled like keywords of the format are plain names. */
+  for (unsigned i = 0; i < ARRAY_LENGTH(keywords); ++i) {
+    tt_int_op(LOOKUP(keywords[i], created), OP_EQ, DARKNAME_FOUND);
+    tt_str_op(address, OP_EQ, DARK_VECTOR_ADDRESS_SITE);
+  }
+
+  /* A name can expire while the snapshot that lists it is still good. */
+  tt_int_op(LOOKUP("soon", created + DARK_VECTOR_DAY - 1), OP_EQ,
+            DARKNAME_FOUND);
+  tt_int_op(LOOKUP("soon", created + DARK_VECTOR_DAY), OP_EQ,
+            DARKNAME_NOT_FOUND);
+
+  /* And the snapshot goes out of date while we hold it: after that we do
+   * not know which names there are. */
+  tt_int_op(LOOKUP("site", DARK_VECTOR_VALID_UNTIL), OP_EQ, DARKNAME_FOUND);
+  tt_int_op(LOOKUP("site", DARK_VECTOR_VALID_UNTIL + 1), OP_EQ,
+            DARKNAME_UNAVAILABLE);
+  tt_int_op(LOOKUP("nosuch", DARK_VECTOR_VALID_UNTIL + 1), OP_EQ,
+            DARKNAME_UNAVAILABLE);
+  darknames_snapshot_free(snapshot);
+
+  /* Fields that a later revision of the format adds to a name are ignored. */
+  snapshot = parse_vector(DARK_VECTOR_EXTRA_FIELDS, created, NULL, &problem);
+  tt_assert(snapshot);
+  tt_int_op(LOOKUP("shop", created), OP_EQ, DARKNAME_FOUND);
+  tt_str_op(address, OP_EQ, DARK_VECTOR_ADDRESS_SHOP);
+  darknames_snapshot_free(snapshot);
+
+  /* A certificate may run out before the snapshot does. */
+  snapshot = parse_vector(DARK_VECTOR_SHORT_CERTIFICATE,
+                          created + DARK_VECTOR_DAY, NULL, &problem);
+  tt_assert(snapshot);
+  tt_int_op(LOOKUP("site", created + DARK_VECTOR_DAY), OP_EQ, DARKNAME_FOUND);
+  tt_int_op(LOOKUP("site", created + DARK_VECTOR_DAY + 1), OP_EQ,
+            DARKNAME_UNAVAILABLE);
+#undef LOOKUP
+
+ done:
+  darknames_snapshot_free(snapshot);
+}
+
+/** What must not be accepted, and why it is not. */
+static void
+test_dark_names_snapshot_rejected(void *arg)
+{
+  (void)arg;
+  const time_t created = DARK_VECTOR_CREATED;
+  const size_t valid_len = strlen(DARK_VECTOR_VALID);
+  char *copy = NULL;
+  const char *problem;
+  static const struct {
+    const char *text;
+    time_t now;
+    const char *problem;
+  } cases[] = {
+    /* Not what the registry signed. */
+    { DARK_VECTOR_TAMPERED, DARK_VECTOR_CREATED,
+      "it is not signed by the signing key" },
+    { DARK_VECTOR_WRONG_ROOT, DARK_VECTOR_CREATED,
+      "its signing key is not certified by the root key" },
+    /* Signed, and out of date. */
+    { DARK_VECTOR_VALID, DARK_VECTOR_VALID_UNTIL + 1,
+      "it is no longer valid" },
+    { DARK_VECTOR_SHORT_CERTIFICATE, DARK_VECTOR_CREATED + DARK_VECTOR_DAY + 1,
+      "the certificate of its signing key has expired" },
+    /* Signed, and not made the way the format says. */
+    { DARK_VECTOR_UNSORTED, DARK_VECTOR_CREATED, "it is malformed" },
+    { DARK_VECTOR_DUPLICATE, DARK_VECTOR_CREATED, "it is malformed" },
+    { DARK_VECTOR_COUNT_LOW, DARK_VECTOR_CREATED, "it is malformed" },
+    { DARK_VECTOR_COUNT_HIGH, DARK_VECTOR_CREATED, "it is malformed" },
+    { DARK_VECTOR_UNKNOWN_LINE, DARK_VECTOR_CREATED, "it is malformed" },
+    { DARK_VECTOR_LEADING_ZERO, DARK_VECTOR_CREATED, "it is malformed" },
+    /* Not a snapshot at all. */
+    { "", DARK_VECTOR_CREATED, "it is malformed" },
+    { "\n", DARK_VECTOR_CREATED, "it is malformed" },
+    { "dark-names-snapshot 1\n", DARK_VECTOR_CREATED, "it is malformed" },
+    { "dark-names-snapshot 2\n\n\n", DARK_VECTOR_CREATED, "it is malformed" },
+  };
+
+  for (unsigned i = 0; i < ARRAY_LENGTH(cases); ++i) {
+    problem = NULL;
+    tt_ptr_op(parse_vector(cases[i].text, cases[i].now, NULL, &problem),
+              OP_EQ, NULL);
+    tt_str_op(problem, OP_EQ, cases[i].problem);
+  }
+
+  /* The good snapshot, cut short of its last newline, or with one more. */
+  tt_ptr_op(darknames_snapshot_parse(DARK_VECTOR_VALID, valid_len - 1,
+                                     vector_root_key(), created, NULL,
+                                     &problem), OP_EQ, NULL);
+  tor_asprintf(&copy, "%s\n", DARK_VECTOR_VALID);
+  tt_ptr_op(parse_vector(copy, created, NULL, &problem), OP_EQ, NULL);
+  tor_free(copy);
+
+  /* A NUL anywhere in it. */
+  copy = tor_memdup(DARK_VECTOR_VALID, valid_len + 1);
+  copy[valid_len / 2] = '\0';
+  tt_ptr_op(darknames_snapshot_parse(copy, valid_len, vector_root_key(),
+                                     created, NULL, &problem), OP_EQ, NULL);
+  tt_str_op(problem, OP_EQ, "it is malformed");
+
+ done:
+  tor_free(copy);
+}
+
+/** A snapshot is not accepted after a newer one was. */
+static void
+test_dark_names_rollback(void *arg)
+{
+  (void)arg;
+  const time_t created = DARK_VECTOR_CREATED;
+  const char *problem;
+  darknames_snapshot_t *snapshot = NULL;
+  darknames_freshness_t accepted;
+
+  /* The very snapshot that was accepted last, or anything after one that
+   * was older by both measures. */
+  static const darknames_freshness_t not_newer[] = {
+    { DARK_VECTOR_HEAD_INDEX, DARK_VECTOR_CREATED },
+    { DARK_VECTOR_HEAD_INDEX - 1, DARK_VECTOR_CREATED - 1 },
+    { 0, 0 },
+  };
+  /* Newer by either measure is enough to make this one a step back. */
+  static const darknames_freshness_t newer[] = {
+    { DARK_VECTOR_HEAD_INDEX + 1, DARK_VECTOR_CREATED },
+    { DARK_VECTOR_HEAD_INDEX, DARK_VECTOR_CREATED + 1 },
+  };
+
+  for (unsigned i = 0; i < ARRAY_LENGTH(not_newer); ++i) {
+    accepted = not_newer[i];
+    snapshot = parse_vector(DARK_VECTOR_VALID, created, &accepted, &problem);
+    tt_assert(snapshot);
+    darknames_snapshot_free(snapshot);
+  }
+  for (unsigned i = 0; i < ARRAY_LENGTH(newer); ++i) {
+    accepted = newer[i];
+    tt_ptr_op(parse_vector(DARK_VECTOR_VALID, created, &accepted, &problem),
+              OP_EQ, NULL);
+    tt_str_op(problem, OP_EQ,
+              "it is older than one that was accepted before");
+  }
+
+ done:
+  darknames_snapshot_free(snapshot);
+}
+
+/** Thousands of ways to spoil the good snapshot: none of them is accepted,
+ * and none of them breaks the parser. The sequence is the same on every
+ * run. */
+static void
+test_dark_names_mutations(void *arg)
+{
+  (void)arg;
+  const char *valid = DARK_VECTOR_VALID;
+  const size_t len = strlen(valid);
+  const char *problem;
+  char *mutated = NULL;
+  uint32_t rng = 0x6461726b;
+
+#define NEXT_RANDOM() \
+  (rng ^= rng << 13, rng ^= rng >> 17, rng ^= rng << 5, rng)
+
+  for (int i = 0; i < 4000; ++i) {
+    size_t mutated_len = len;
+    const size_t at = NEXT_RANDOM() % len;
+    /* The line that `at` is in, with its newline. */
+    const char *line = valid + at, *line_end;
+    while (line > valid && line[-1] != '\n')
+      --line;
+    line_end = (const char *)memchr(line, '\n', valid + len - line) + 1;
+
+    mutated = tor_malloc(2 * len + 1);
+    memcpy(mutated, valid, len);
+    switch (NEXT_RANDOM() % 4) {
+      case 0: /* One byte becomes another. */
+        mutated[at] = (char)(valid[at] ^ (1 + NEXT_RANDOM() % 255));
+        break;
+      case 1: /* Cut short. */
+        mutated_len = at;
+        break;
+      case 2: /* A line twice. */
+        memcpy(mutated + (line_end - valid), line, line_end - line);
+        memcpy(mutated + (line_end - valid) + (line_end - line), line_end,
+               valid + len - line_end);
+        mutated_len = len + (size_t)(line_end - line);
+        break;
+      default: /* A line gone. */
+        memmove(mutated + (line - valid), line_end, valid + len - line_end);
+        mutated_len = len - (size_t)(line_end - line);
+        break;
+    }
+
+    tt_ptr_op(darknames_snapshot_parse(mutated, mutated_len,
+                                       vector_root_key(),
+                                       DARK_VECTOR_CREATED, NULL, &problem),
+              OP_EQ, NULL);
+    tt_assert(problem);
+    tor_free(mutated);
+  }
+#undef NEXT_RANDOM
+
+ done:
+  tor_free(mutated);
+}
+
+/** Write <b>text</b> where the helper leaves the snapshot for us. */
+static void
+write_snapshot_file(const char *text)
+{
+  char *fname = get_datadir_fname2("dark_names", "snapshot");
+  tor_assert(write_str_to_file(fname, text, 1) == 0);
+  tor_free(fname);
+}
+
+/** Names resolve from the file in the data directory, and a bad file there
+ * does not cost us the snapshot we already have. */
+static void
+test_dark_names_lookup(void *arg)
+{
+  (void)arg;
+  or_options_t *options = get_options_mutable();
+  char address[HS_SERVICE_ADDR_LEN_BASE32 + 1];
+  char *directory = NULL, *accepted = NULL, *fname = NULL;
+
+  tor_free(options->DataDirectory);
+  options->DataDirectory = tor_strdup(get_fname("dark_names_lookup"));
+  directory = get_datadir_fname("dark_names");
+  tt_int_op(check_private_dir(options->DataDirectory, CPD_CREATE, NULL),
+            OP_EQ, 0);
+  tt_int_op(check_private_dir(directory, CPD_CREATE, NULL), OP_EQ, 0);
+  /* Look at the file on every lookup, as in a testing network. */
+  options->TestingTorNetwork = 1;
+  update_approx_time(DARK_VECTOR_CREATED);
+
+  /* No root key: nothing resolves, whatever is on the disk. */
+  write_snapshot_file(DARK_VECTOR_VALID);
+  tt_int_op(darknames_lookup("site", address), OP_EQ, DARKNAME_UNAVAILABLE);
+
+  options->DarkNamesRootKey = tor_strdup(DARK_VECTOR_ROOT_KEY);
+  tt_int_op(darknames_lookup("site", address), OP_EQ, DARKNAME_FOUND);
+  tt_str_op(address, OP_EQ, DARK_VECTOR_ADDRESS_SHOP);
+  tt_int_op(darknames_lookup("nosuch", address), OP_EQ, DARKNAME_NOT_FOUND);
+
+  /* We wrote down what we accepted. */
+  fname = get_datadir_fname2("dark_names", "accepted");
+  accepted = read_file_to_str(fname, RFTS_BIN, NULL);
+  tt_assert(accepted);
+  tt_str_op(accepted, OP_EQ, "13 1800000000\n");
+
+  /* Files that are not what the registry signed, or not a snapshot at all,
+   * leave us with what we had. */
+  setup_full_capture_of_logs(LOG_WARN);
+  write_snapshot_file(DARK_VECTOR_WRONG_ROOT);
+  tt_int_op(darknames_lookup("shop", address), OP_EQ, DARKNAME_FOUND);
+  tt_str_op(address, OP_EQ, DARK_VECTOR_ADDRESS_SHOP);
+  expect_single_log_msg_containing(
+                          "its signing key is not certified by the root key");
+  mock_clean_saved_logs();
+  write_snapshot_file("garbage\n");
+  tt_int_op(darknames_lookup("site", address), OP_EQ, DARKNAME_FOUND);
+  /* This one ends with the signature of the snapshot we hold, so it is taken
+   * for that snapshot and not read at all: its changed address is not
+   * what "shop" resolves to. */
+  write_snapshot_file(DARK_VECTOR_VALID);
+  tt_int_op(darknames_lookup("site", address), OP_EQ, DARKNAME_FOUND);
+  write_snapshot_file(DARK_VECTOR_TAMPERED);
+  tt_int_op(darknames_lookup("shop", address), OP_EQ, DARKNAME_FOUND);
+  tt_str_op(address, OP_EQ, DARK_VECTOR_ADDRESS_SHOP);
+  teardown_capture_of_logs();
+
+  /* A good file takes its place. */
+  write_snapshot_file(DARK_VECTOR_EXTRA_FIELDS);
+  tt_int_op(darknames_lookup("site", address), OP_EQ, DARKNAME_FOUND);
+
+  /* The snapshot we hold goes out of date like any other. */
+  update_approx_time(DARK_VECTOR_VALID_UNTIL + 1);
+  tt_int_op(darknames_lookup("site", address), OP_EQ, DARKNAME_UNAVAILABLE);
+  update_approx_time(DARK_VECTOR_CREATED);
+
+  /* Under another root key it was never vouched for. */
+  tor_free(options->DarkNamesRootKey);
+  options->DarkNamesRootKey =
+    tor_strdup("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+  setup_full_capture_of_logs(LOG_WARN);
+  tt_int_op(darknames_lookup("site", address), OP_EQ, DARKNAME_UNAVAILABLE);
+  teardown_capture_of_logs();
+
+  /* And once we have accepted a newer snapshot, this one is a step back. */
+  tor_free(options->DarkNamesRootKey);
+  options->DarkNamesRootKey = tor_strdup(DARK_VECTOR_ROOT_KEY);
+  tt_int_op(write_str_to_file(fname, "14 1800000000\n", 1), OP_EQ, 0);
+  setup_full_capture_of_logs(LOG_WARN);
+  tt_int_op(darknames_lookup("site", address), OP_EQ, DARKNAME_UNAVAILABLE);
+  teardown_capture_of_logs();
+
+ done:
+  teardown_capture_of_logs();
+  darknames_free_all();
+  tor_free(directory);
+  tor_free(accepted);
+  tor_free(fname);
+}
+
 #define DARK_TEST(name, flags)                          \
   { #name, test_dark_ ##name, (flags), NULL, NULL }
 
@@ -362,5 +755,11 @@ struct testcase_t dark_tests[] = {
   DARK_TEST(dirauth_rejects_exit_descriptor, TT_FORK),
   DARK_TEST(client_refuses_non_dark, TT_FORK),
   DARK_TEST(client_resolves_literal_address, TT_FORK),
+  DARK_TEST(names_validity, 0),
+  DARK_TEST(names_snapshot, 0),
+  DARK_TEST(names_snapshot_rejected, 0),
+  DARK_TEST(names_rollback, 0),
+  DARK_TEST(names_mutations, 0),
+  DARK_TEST(names_lookup, TT_FORK),
   END_OF_TESTCASES
 };

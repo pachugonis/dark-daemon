@@ -92,6 +92,7 @@
 #include "feature/dircache/dirserv.h"
 #include "feature/dirclient/dirclient_modes.h"
 #include "feature/hibernate/hibernate.h"
+#include "feature/darknames/darknames.h"
 #include "feature/hs/hs_common.h"
 #include "feature/hs/hs_config.h"
 #include "feature/hs/hs_pow.h"
@@ -403,6 +404,7 @@ static const config_var_t option_vars_[] = {
   V(CookieAuthFile,              FILENAME, NULL),
   V(CountPrivateBandwidth,       BOOL,     "0"),
   VAR_IMMUTABLE("DataDirectory", FILENAME, DataDirectory_option, NULL),
+  V(DarkNamesRootKey,            STRING,   NULL),
   V(DataDirectoryGroupReadable,  BOOL,     "0"),
   V(DisableOOSCheck,             BOOL,     "1"),
   V(DisableNetwork,              BOOL,     "0"),
@@ -3926,6 +3928,10 @@ options_validate_cb(const void *old_options_, void *options_, char **msg)
     }
     routerset_free(rs);
   }
+
+  if (options->DarkNamesRootKey &&
+      !darknames_root_key_is_valid(options->DarkNamesRootKey))
+    REJECT("DarkNamesRootKey is not an Ed25519 public key in base64.");
 
   if (validate_addr_policies(options, msg) < 0)
     return -1;
