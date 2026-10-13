@@ -2316,9 +2316,8 @@ connection_ap_handshake_rewrite_and_attach(entry_connection_t *conn,
   /* Now, we handle everything that isn't a .onion address. */
   if (addresstype != ONION_V3_HOSTNAME) {
     /* Not a hidden-service request.  It's either a hostname or an IP,
-     * possibly with a .exit that we stripped off.  We're going to check
-     * if we're allowed to connect/resolve there, and then launch the
-     * appropriate request. */
+     * possibly with a .exit that we stripped off.  We refuse it, unless it
+     * can be answered without leaving this process. */
 
     /* Check for funny characters in the address. */
     if (address_is_invalid_destination(socks->address, 1)) {
@@ -2331,58 +2330,34 @@ connection_ap_handshake_rewrite_and_attach(entry_connection_t *conn,
       return -1;
     }
 
-    /* socks->address is a non-onion hostname or IP address.
-     * If we can't do any non-onion requests, refuse the connection.
-     * If we have a hostname but can't do DNS, refuse the connection.
-     * If we have an IP address, but we can't use that address family,
-     * refuse the connection.
-     *
-     * If we can do DNS requests, and we can use at least one address family,
-     * then we have to resolve the address first. Then we'll know if it
-     * resolves to a usable address family. */
-
-    /* First, check if all non-onion traffic is disabled */
-    if (!conn->entry_cfg.dns_request && !conn->entry_cfg.ipv4_traffic
-        && !conn->entry_cfg.ipv6_traffic) {
-        log_warn(LD_APP, "Refusing to connect to non-hidden-service hostname "
-                 "or IP address %s because Port has OnionTrafficOnly set (or "
-                 "NoDNSRequest, NoIPv4Traffic, and NoIPv6Traffic).",
-                 safe_str_client(socks->address));
-        connection_mark_unattached_ap(conn, END_STREAM_REASON_ENTRYPOLICY);
-        return -1;
-    }
-
-    /* Then check if we have a hostname or IP address, and whether DNS or
-     * the IP address family are permitted.  Reject if not. */
-    tor_addr_t dummy_addr;
-    int socks_family = tor_addr_parse(&dummy_addr, socks->address);
-    /* family will be -1 for a non-onion hostname that's not an IP */
-    if (socks_family == -1) {
-      if (!conn->entry_cfg.dns_request) {
-        log_warn(LD_APP, "Refusing to connect to hostname %s "
-                 "because Port has NoDNSRequest set.",
-                 safe_str_client(socks->address));
-        connection_mark_unattached_ap(conn, END_STREAM_REASON_ENTRYPOLICY);
+    /* This network reaches .dark addresses and nothing else. Only one kind
+     * of request gets past this point, and it needs no network: resolving a
+     * literal IP address, which is also how an automapped .dark name gets
+     * its answer. Nothing about the port or the request can widen this. */
+    {
+      tor_addr_t literal;
+      const bool local_resolve =
+        socks->command == SOCKS_COMMAND_RESOLVE &&
+        tor_addr_parse(&literal, socks->address) >= 0;
+      if (!local_resolve) {
+        static ratelim_t not_dark_limit = RATELIM_INIT(60*15);
+        log_fn_ratelim(&not_dark_limit, LOG_WARN, LD_APP,
+                       "Refusing a request for %s: this network only reaches "
+                       ".dark addresses.",
+                       safe_str_client(socks->address));
+        if (SOCKS_COMMAND_IS_RESOLVE(socks->command)) {
+          /* Answer that there is no such name, not that we failed: a
+           * resolver may take a failure as a cue to ask another server. */
+          connection_ap_handshake_socks_resolved(conn, RESOLVED_TYPE_ERROR,
+                                                 0, NULL, -1, TIME_MAX);
+          connection_mark_unattached_ap(conn,
+                               END_STREAM_REASON_ENTRYPOLICY |
+                               END_STREAM_REASON_FLAG_ALREADY_SOCKS_REPLIED);
+        } else {
+          connection_mark_unattached_ap(conn, END_STREAM_REASON_ENTRYPOLICY);
+        }
         return -1;
       }
-    } else if (socks_family == AF_INET) {
-      if (!conn->entry_cfg.ipv4_traffic) {
-        log_warn(LD_APP, "Refusing to connect to IPv4 address %s because "
-                 "Port has NoIPv4Traffic set.",
-                 safe_str_client(socks->address));
-        connection_mark_unattached_ap(conn, END_STREAM_REASON_ENTRYPOLICY);
-        return -1;
-      }
-    } else if (socks_family == AF_INET6) {
-      if (!conn->entry_cfg.ipv6_traffic) {
-        log_warn(LD_APP, "Refusing to connect to IPv6 address %s because "
-                 "Port has NoIPv6Traffic set.",
-                 safe_str_client(socks->address));
-        connection_mark_unattached_ap(conn, END_STREAM_REASON_ENTRYPOLICY);
-        return -1;
-      }
-    } else {
-      tor_assert_nonfatal_unreached_once();
     }
 
     /* See if this is a hostname lookup that we can answer immediately.
