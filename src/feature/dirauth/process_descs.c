@@ -325,6 +325,19 @@ dirserv_router_get_status(const routerinfo_t *router, const char **msg,
     return RTR_REJECT;
   }
 
+  /* There are no exits in this network, so a relay that offers to be one is
+   * not running what we run. */
+  if (!router_exit_policy_rejects_all(router)) {
+    log_fn(severity, LD_DIR,
+           "Descriptor from router %s (platform %s) "
+           "has an exit policy that accepts something.",
+           router_describe(router), router->platform);
+    if (msg)
+      *msg = "This network has no exit relays: "
+             "the exit policy must be reject *:*.";
+    return RTR_REJECT;
+  }
+
   /* First, check for the more common reasons to reject a router. */
   if (router->cache_info.signing_key_cert) {
     /* This has an ed25519 identity key. */

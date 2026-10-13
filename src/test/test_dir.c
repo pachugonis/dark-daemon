@@ -4610,7 +4610,9 @@ reset_routerstatus(routerstatus_t *rs,
 #define ROUTERSET_NONE_STR ""
 
 /*
- * Test that dirserv_set_routerstatus_testing sets router flags correctly
+ * Test that dirserv_set_routerstatus_testing sets router flags correctly.
+ * The Exit flag is the exception: it is cleared whatever the options say,
+ * since this network has no exits. For the other flags:
  * Using "*"  sets flags on A and B
  * Using "A"  sets flags on A
  * Using ""   sets flags on Neither
@@ -4679,8 +4681,8 @@ test_dir_dirserv_set_routerstatus_testing(void *arg)
   dirserv_set_routerstatus_testing(rs_a);
   dirserv_set_routerstatus_testing(rs_b);
 
-  tt_uint_op(rs_a->is_exit, OP_EQ, 1);
-  tt_uint_op(rs_b->is_exit, OP_EQ, 1);
+  tt_uint_op(rs_a->is_exit, OP_EQ, 0);
+  tt_uint_op(rs_b->is_exit, OP_EQ, 0);
   /* Be paranoid - check no other flags are set */
   tt_uint_op(rs_a->is_possible_guard, OP_EQ, 0);
   tt_uint_op(rs_b->is_possible_guard, OP_EQ, 0);
@@ -4727,7 +4729,7 @@ test_dir_dirserv_set_routerstatus_testing(void *arg)
   dirserv_set_routerstatus_testing(rs_a);
   dirserv_set_routerstatus_testing(rs_b);
 
-  tt_uint_op(rs_a->is_exit, OP_EQ, 1);
+  tt_uint_op(rs_a->is_exit, OP_EQ, 0);
   tt_uint_op(rs_b->is_exit, OP_EQ, 0);
   tt_uint_op(rs_a->is_possible_guard, OP_EQ, 1);
   tt_uint_op(rs_b->is_possible_guard, OP_EQ, 0);
@@ -4774,7 +4776,7 @@ test_dir_dirserv_set_routerstatus_testing(void *arg)
 
   dirserv_set_routerstatus_testing(rs_b);
 
-  tt_uint_op(rs_b->is_exit, OP_EQ, 1);
+  tt_uint_op(rs_b->is_exit, OP_EQ, 0);
   tt_uint_op(rs_b->is_possible_guard, OP_EQ, 1);
   tt_uint_op(rs_b->is_hs_dir, OP_EQ, 1);
 
@@ -4825,7 +4827,7 @@ test_dir_dirserv_set_routerstatus_testing(void *arg)
   tt_uint_op(rs_a->is_exit, OP_EQ, 0);
   tt_uint_op(rs_a->is_possible_guard, OP_EQ, 0);
   tt_uint_op(rs_a->is_hs_dir, OP_EQ, 0);
-  tt_uint_op(rs_b->is_exit, OP_EQ, 1);
+  tt_uint_op(rs_b->is_exit, OP_EQ, 0);
   tt_uint_op(rs_b->is_possible_guard, OP_EQ, 1);
   tt_uint_op(rs_b->is_hs_dir, OP_EQ, 1);
 
@@ -7155,6 +7157,7 @@ test_dir_dirserv_router_get_status(void *arg)
   ri->nickname = tor_strdup("Jessica");
   ri->identity_pkey = crypto_pk_dup_key(pk);
   ri->protocol_list = tor_strdup(protover_get_supported_protocols());
+  ri->policy_is_reject_star = 1;
 
   curve25519_keypair_t ri_onion_keypair;
   curve25519_keypair_generate(&ri_onion_keypair, 0);

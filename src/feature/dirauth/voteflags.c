@@ -201,7 +201,7 @@ router_counts_toward_thresholds(const node_t *node, time_t now,
  * stable_mtbf, enough_mtbf_info, guard_wfu, guard_tk, fast_bandwidth,
  * guard_bandwidth_including_exits, and guard_bandwidth_excluding_exits.
  *
- * Also, set the is_exit flag of each router appropriately. */
+ * Also, clear the is_exit flag of each router: this network has no exits. */
 void
 dirserv_compute_performance_thresholds(digestmap_t *omit_as_sybil)
 {
@@ -257,8 +257,8 @@ dirserv_compute_performance_thresholds(digestmap_t *omit_as_sybil)
 
     routerinfo_t *ri = node->ri;
     if (ri) {
-      node->is_exit = (!router_exit_policy_rejects_all(ri) &&
-                       exit_policy_is_general_exit(ri->exit_policy));
+      /* There are no exits in this network, whatever a descriptor says. */
+      node->is_exit = 0;
     }
 
     if (router_counts_toward_thresholds(node, now, omit_as_sybil,
@@ -639,9 +639,9 @@ dirauth_set_routerstatus_from_routerinfo(routerstatus_t *rs,
   }
 }
 
-/** Use TestingDirAuthVoteExit, TestingDirAuthVoteGuard, and
- * TestingDirAuthVoteHSDir to give out the Exit, Guard, and HSDir flags,
- * respectively. But don't set the corresponding node flags.
+/** Use TestingDirAuthVoteGuard and TestingDirAuthVoteHSDir to give out the
+ * Guard and HSDir flags, respectively, and never give out Exit. But don't
+ * set the corresponding node flags.
  * Should only be called if TestingTorNetwork is set. */
 STATIC void
 dirserv_set_routerstatus_testing(routerstatus_t *rs)
@@ -650,12 +650,9 @@ dirserv_set_routerstatus_testing(routerstatus_t *rs)
 
   tor_assert(get_options()->TestingTorNetwork);
 
-  if (routerset_contains_routerstatus(options->TestingDirAuthVoteExit,
-                                      rs, 0)) {
-    rs->is_exit = 1;
-  } else if (options->TestingDirAuthVoteExitIsStrict) {
-    rs->is_exit = 0;
-  }
+  /* TestingDirAuthVoteExit is ignored: there are no exits in this network,
+   * not even in a testing one. */
+  rs->is_exit = 0;
 
   if (routerset_contains_routerstatus(options->TestingDirAuthVoteGuard,
                                       rs, 0)) {

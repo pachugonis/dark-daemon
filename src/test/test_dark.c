@@ -8,6 +8,7 @@
 
 #define CIRCUITLIST_PRIVATE
 #define CONFIG_PRIVATE
+#define PROCESS_DESCS_PRIVATE
 
 #include "core/or/or.h"
 #include "test/test.h"
@@ -18,9 +19,15 @@
 #include "core/or/connection_edge.h"
 #include "core/or/or_circuit_st.h"
 #include "core/or/policies.h"
+#include "core/or/protover.h"
 #include "core/or/relay.h"
 #include "core/or/relay_msg_st.h"
+#include "feature/dirauth/process_descs.h"
+#include "feature/nodelist/routerinfo.h"
+#include "feature/nodelist/routerinfo_st.h"
 #include "feature/relay/routermode.h"
+#include "lib/crypt_ops/crypto_curve25519.h"
+#include "lib/crypt_ops/crypto_rsa.h"
 #include "lib/encoding/confline.h"
 
 /* What the last cell sent from the edge of a circuit was. */
@@ -153,6 +160,56 @@ test_dark_relay_refuses_resolve(void *arg)
     circuit_free_(TO_CIRCUIT(or_circ));
 }
 
+/** An authority takes a descriptor only if its exit policy rejects
+ * everything. */
+static void
+test_dark_dirauth_rejects_exit_descriptor(void *arg)
+{
+  (void)arg;
+  routerinfo_t *ri = NULL;
+  crypto_pk_t *pk = pk_generate(0);
+  curve25519_keypair_t onion_keypair;
+  const char *msg = NULL;
+  char digest[DIGEST_LEN];
+  char fp[HEX_DIGEST_LEN+1];
+
+  authdir_init_fingerprint_list();
+
+  ri = tor_malloc_zero(sizeof(routerinfo_t));
+  tor_addr_from_ipv4h(&ri->ipv4_addr, 0xc0a80001u);
+  ri->ipv4_orport = 9001;
+  ri->platform = tor_strdup("Tor 0.4.9.14 on Linux");
+  ri->nickname = tor_strdup("Relay");
+  ri->identity_pkey = crypto_pk_dup_key(pk);
+  ri->protocol_list = tor_strdup(protover_get_supported_protocols());
+  curve25519_keypair_generate(&onion_keypair, 0);
+  ri->onion_curve25519_pkey = tor_memdup(&onion_keypair.pubkey,
+                                         sizeof(curve25519_public_key_t));
+
+  /* A relay that refuses every exit stream is accepted. */
+  ri->policy_is_reject_star = 1;
+  tt_int_op(dirserv_router_get_status(ri, &msg, LOG_INFO), OP_EQ, 0);
+
+  /* One that would carry any is not... */
+  ri->policy_is_reject_star = 0;
+  tt_int_op(dirserv_router_get_status(ri, &msg, LOG_INFO), OP_EQ, RTR_REJECT);
+  tt_str_op(msg, OP_EQ, "This network has no exit relays: "
+                        "the exit policy must be reject *:*.");
+
+  /* ...even when a status is listed for its fingerprint, which makes the
+   * later checks return that status early. */
+  tt_int_op(crypto_pk_get_digest(ri->identity_pkey, digest), OP_EQ, 0);
+  base16_encode(fp, sizeof(fp), digest, DIGEST_LEN);
+  add_rsa_fingerprint_to_dir(fp, authdir_return_fingerprint_list(),
+                             RTR_INVALID);
+  tt_int_op(dirserv_router_get_status(ri, &msg, LOG_INFO), OP_EQ, RTR_REJECT);
+
+ done:
+  dirserv_free_fingerprint_list();
+  routerinfo_free(ri);
+  crypto_pk_free(pk);
+}
+
 #define DARK_TEST(name, flags)                          \
   { #name, test_dark_ ##name, (flags), NULL, NULL }
 
@@ -160,5 +217,6 @@ struct testcase_t dark_tests[] = {
   DARK_TEST(exit_policy_ignores_options, 0),
   DARK_TEST(relay_refuses_begin, TT_FORK),
   DARK_TEST(relay_refuses_resolve, TT_FORK),
+  DARK_TEST(dirauth_rejects_exit_descriptor, TT_FORK),
   END_OF_TESTCASES
 };
