@@ -1102,6 +1102,28 @@ config_free_all(void)
   config_mgr_free(options_mgr);
 }
 
+/** Return true iff <b>address</b> is a registered name, or is spelled like
+ * one: it ends with the suffix of service addresses, and the label before
+ * the suffix is not as long as an address.
+ *
+ * Such a string is never logged, whatever SafeLogging is set to. Of all
+ * that a user asks for, the name says the most; and it is enough for a log
+ * that there was one. */
+static bool
+address_is_registered_name(const char *address)
+{
+  static const char suffix[] = "." HS_ADDRESS_TLD;
+  const size_t len = strlen(address), suffix_len = sizeof(suffix) - 1;
+  const char *label_end, *label;
+
+  if (len <= suffix_len || strcasecmp(address + len - suffix_len, suffix))
+    return false;
+  label_end = label = address + len - suffix_len;
+  while (label > address && label[-1] != '.')
+    --label;
+  return (size_t)(label_end - label) != HS_SERVICE_ADDR_LEN_BASE32;
+}
+
 /** Make <b>address</b> -- a piece of information related to our operation as
  * a client -- safe to log according to the settings in options->SafeLogging,
  * and return it.
@@ -1117,7 +1139,8 @@ safe_str_client_opts(const or_options_t *options, const char *address)
     options = get_options();
   }
 
-  if (options->SafeLogging_ == SAFELOG_SCRUB_ALL)
+  if (options->SafeLogging_ == SAFELOG_SCRUB_ALL ||
+      address_is_registered_name(address))
     return "[scrubbed]";
   else
     return address;
@@ -1139,7 +1162,8 @@ safe_str_opts(const or_options_t *options, const char *address)
     options = get_options();
   }
 
-  if (options->SafeLogging_ != SAFELOG_SCRUB_NONE)
+  if (options->SafeLogging_ != SAFELOG_SCRUB_NONE ||
+      address_is_registered_name(address))
     return "[scrubbed]";
   else
     return address;
@@ -1151,7 +1175,8 @@ safe_str_opts(const or_options_t *options, const char *address)
 const char *
 escaped_safe_str_client(const char *address)
 {
-  if (get_options()->SafeLogging_ == SAFELOG_SCRUB_ALL)
+  if (get_options()->SafeLogging_ == SAFELOG_SCRUB_ALL ||
+      (address && address_is_registered_name(address)))
     return "[scrubbed]";
   else
     return escaped(address);
@@ -1163,7 +1188,8 @@ escaped_safe_str_client(const char *address)
 const char *
 escaped_safe_str(const char *address)
 {
-  if (get_options()->SafeLogging_ != SAFELOG_SCRUB_NONE)
+  if (get_options()->SafeLogging_ != SAFELOG_SCRUB_NONE ||
+      (address && address_is_registered_name(address)))
     return "[scrubbed]";
   else
     return escaped(address);

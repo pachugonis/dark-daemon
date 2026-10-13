@@ -84,6 +84,8 @@ typedef enum hostname_type_t {
   EXIT_HOSTNAME,
   NORMAL_HOSTNAME,
   ONION_V3_HOSTNAME,
+  /** A name from the registry, which stands for a service address. */
+  DARK_NAME_HOSTNAME,
 } hostname_type_t;
 
 MOCK_DECL(void,connection_mark_unattached_ap_,

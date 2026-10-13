@@ -88,6 +88,7 @@
 #include "feature/dircache/dirserv.h"
 #include "feature/dircommon/directory.h"
 #include "feature/hibernate/hibernate.h"
+#include "feature/darknames/darknames.h"
 #include "feature/hs/hs_cache.h"
 #include "feature/hs/hs_circuit.h"
 #include "feature/hs/hs_client.h"
@@ -1707,6 +1708,11 @@ consider_plaintext_ports(entry_connection_t *conn, uint16_t port)
  * If address is of the form "y.dark" with a badly-formed handle y:
  *     Return BAD_HOSTNAME and log a message.
  *
+ * If address is of the form "y.dark" or "x.y.dark" where y is not as long
+ * as a handle, and is spelled as a registered name is:
+ *     Change nothing and return DARK_NAME_HOSTNAME. Whether there is such a
+ *     name, the caller has to find out.
+ *
  * If address is of the form "y.onion":
  *     Return BAD_HOSTNAME and log a message. This network has no .onion
  *     services, and such a name must never be handled as a normal hostname.
@@ -1756,6 +1762,15 @@ parse_extended_hostname(char *address, hostname_type_t *type_out)
       HS_SERVICE_ADDR_LEN_BASE32+1) {
     *type_out = BAD_HOSTNAME;
     goto failed;
+  }
+  /* A registered name is shorter than a handle. It is left in the address
+   * as it came, suffix and all: it is by the suffix that a name is known for
+   * one, and kept out of the logs. */
+  if (strlen(query) != HS_SERVICE_ADDR_LEN_BASE32 &&
+      darknames_name_is_valid(query)) {
+    *s = '.';
+    *type_out = DARK_NAME_HOSTNAME;
+    goto success;
   }
   if (q != address) {
     memmove(address, q, strlen(q) + 1 /* also get \0 */);
@@ -2149,6 +2164,64 @@ connection_ap_handle_onion(entry_connection_t *conn,
   return 0;
 }
 
+/** The request on <b>conn</b> is for a registered name. Put the service
+ * address that the name stands for in its place in <b>socks</b>, and return
+ * 0; or refuse the request, and return -1.
+ *
+ * The name itself must not reach a log from here. */
+static int
+connection_ap_resolve_dark_name(entry_connection_t *conn,
+                                socks_request_t *socks)
+{
+  static ratelim_t unavailable_limit = RATELIM_INIT(60*15);
+  char name[DARKNAME_MAX_LEN + 1];
+  char resolved[HS_SERVICE_ADDR_LEN_BASE32 + 1];
+  char *suffix = strrchr(socks->address, '.');
+  const char *label;
+  int reason;
+
+  /* The name is the last label before the suffix. */
+  tor_assert(suffix);
+  *suffix = '\0';
+  label = strrchr(socks->address, '.');
+  strlcpy(name, label ? label + 1 : socks->address, sizeof(name));
+  *suffix = '.';
+
+  switch (darknames_lookup(name, resolved)) {
+    case DARKNAME_FOUND:
+      /* The snapshot holds addresses as they were registered, so this one
+       * is checked like any that a user types. */
+      if (hs_address_is_valid(resolved)) {
+        strlcpy(socks->address, resolved, sizeof(socks->address));
+        return 0;
+      }
+      FALLTHROUGH;
+    case DARKNAME_NOT_FOUND:
+      log_info(LD_APP, "Refusing a request for a name that is not "
+               "registered.");
+      socks->socks_extended_error_code = SOCKS5_HS_NOT_FOUND;
+      reason = END_STREAM_REASON_RESOLVEFAILED;
+      break;
+    case DARKNAME_UNAVAILABLE:
+    default:
+      log_fn_ratelim(&unavailable_limit, LOG_WARN, LD_APP,
+                     "Refusing a request for a name: there is no names "
+                     "snapshot that can be trusted to resolve it from.");
+      reason = END_STREAM_REASON_INTERNAL;
+      break;
+  }
+
+  if (SOCKS_COMMAND_IS_RESOLVE(socks->command)) {
+    /* "No such name", and never "we failed": a resolver that is told of a
+     * failure may take the name to another server. */
+    connection_ap_handshake_socks_resolved(conn, RESOLVED_TYPE_ERROR,
+                                           0, NULL, -1, TIME_MAX);
+    reason |= END_STREAM_REASON_FLAG_ALREADY_SOCKS_REPLIED;
+  }
+  connection_mark_unattached_ap(conn, reason);
+  return -1;
+}
+
 /** Connection <b>conn</b> just finished its socks handshake, or the
  * controller asked us to take care of it. If <b>circ</b> is defined,
  * then that's where we'll want to attach it. Otherwise we have to
@@ -2207,6 +2280,14 @@ connection_ap_handshake_rewrite_and_attach(entry_connection_t *conn,
     }
     connection_mark_unattached_ap(conn, END_STREAM_REASON_TORPROTOCOL);
     return -1;
+  }
+
+  /* A registered name stands for the address that the registry gives it.
+   * From here on the request is for that address. */
+  if (addresstype == DARK_NAME_HOSTNAME) {
+    if (connection_ap_resolve_dark_name(conn, socks) < 0)
+      return -1;
+    addresstype = ONION_V3_HOSTNAME;
   }
 
   /* If this is a .exit hostname, strip off the .name.exit part, and

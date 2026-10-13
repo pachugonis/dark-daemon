@@ -29,6 +29,7 @@
 #include "core/or/dos.h"
 #include "core/or/scheduler.h"
 #include "feature/client/addressmap.h"
+#include "feature/darknames/darknames.h"
 #include "feature/client/bridges.h"
 #include "feature/client/entrynodes.h"
 #include "feature/client/transports.h"
@@ -119,6 +120,7 @@ tor_free_all(int postfork)
   routerlist_free_all();
   networkstatus_free_all();
   addressmap_free_all();
+  darknames_free_all();
   dirserv_free_all();
   rep_hist_free_all();
   bwhist_free_all();

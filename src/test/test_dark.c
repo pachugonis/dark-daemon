@@ -30,6 +30,8 @@
 #include "core/or/socks_request_st.h"
 #include "feature/client/addressmap.h"
 #include "feature/darknames/darknames.h"
+#include "feature/hs/hs_cache.h"
+#include "feature/hs/hs_common.h"
 #include "feature/dirauth/process_descs.h"
 #include "feature/nodelist/routerinfo.h"
 #include "feature/nodelist/routerinfo_st.h"
@@ -656,6 +658,25 @@ write_snapshot_file(const char *text)
   tor_free(fname);
 }
 
+/** Give this test a data directory of its own, called <b>name</b>, with the
+ * place for the snapshot in it; and the time at which the vectors are good. */
+static void
+use_names_directory(const char *name)
+{
+  or_options_t *options = get_options_mutable();
+  char *directory;
+
+  tor_free(options->DataDirectory);
+  options->DataDirectory = tor_strdup(get_fname(name));
+  directory = get_datadir_fname("dark_names");
+  tor_assert(check_private_dir(options->DataDirectory, CPD_CREATE, NULL) == 0);
+  tor_assert(check_private_dir(directory, CPD_CREATE, NULL) == 0);
+  tor_free(directory);
+  /* Look at the file on every lookup, as in a testing network. */
+  options->TestingTorNetwork = 1;
+  update_approx_time(DARK_VECTOR_CREATED);
+}
+
 /** Names resolve from the file in the data directory, and a bad file there
  * does not cost us the snapshot we already have. */
 static void
@@ -664,17 +685,9 @@ test_dark_names_lookup(void *arg)
   (void)arg;
   or_options_t *options = get_options_mutable();
   char address[HS_SERVICE_ADDR_LEN_BASE32 + 1];
-  char *directory = NULL, *accepted = NULL, *fname = NULL;
+  char *accepted = NULL, *fname = NULL;
 
-  tor_free(options->DataDirectory);
-  options->DataDirectory = tor_strdup(get_fname("dark_names_lookup"));
-  directory = get_datadir_fname("dark_names");
-  tt_int_op(check_private_dir(options->DataDirectory, CPD_CREATE, NULL),
-            OP_EQ, 0);
-  tt_int_op(check_private_dir(directory, CPD_CREATE, NULL), OP_EQ, 0);
-  /* Look at the file on every lookup, as in a testing network. */
-  options->TestingTorNetwork = 1;
-  update_approx_time(DARK_VECTOR_CREATED);
+  use_names_directory("dark_names_lookup");
 
   /* No root key: nothing resolves, whatever is on the disk. */
   write_snapshot_file(DARK_VECTOR_VALID);
@@ -740,9 +753,129 @@ test_dark_names_lookup(void *arg)
  done:
   teardown_capture_of_logs();
   darknames_free_all();
-  tor_free(directory);
   tor_free(accepted);
   tor_free(fname);
+}
+
+/** A name never reaches a log, whatever SafeLogging says. An address is
+ * the user's to log or not. */
+static void
+test_dark_names_are_not_logged(void *arg)
+{
+  (void)arg;
+  or_options_t *options = get_options_mutable();
+  static const char *names[] = {
+    "site.dark", "www.site.dark", "SITE.DARK", "a.b.c.site.dark",
+    /* Not names that can be registered, and as much the user's business. */
+    "ab.dark", "a_b.dark",
+    "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.dark",
+  };
+  static const char *not_names[] = {
+    DARK_VECTOR_ADDRESS_SITE ".dark",
+    "www." DARK_VECTOR_ADDRESS_SITE ".dark",
+    DARK_VECTOR_ADDRESS_SITE,
+    "example.com", "site.onion", "dark", ".dark", "site.darker", "1.2.3.4",
+  };
+
+  options->SafeLogging_ = SAFELOG_SCRUB_NONE;
+  for (unsigned i = 0; i < ARRAY_LENGTH(names); ++i) {
+    tt_str_op(safe_str_client(names[i]), OP_EQ, "[scrubbed]");
+    tt_str_op(safe_str(names[i]), OP_EQ, "[scrubbed]");
+    tt_str_op(escaped_safe_str_client(names[i]), OP_EQ, "[scrubbed]");
+    tt_str_op(escaped_safe_str(names[i]), OP_EQ, "[scrubbed]");
+  }
+  for (unsigned i = 0; i < ARRAY_LENGTH(not_names); ++i) {
+    tt_str_op(safe_str_client(not_names[i]), OP_EQ, not_names[i]);
+    tt_str_op(safe_str(not_names[i]), OP_EQ, not_names[i]);
+  }
+
+  /* With SafeLogging on, nothing changes: all of it is scrubbed. */
+  options->SafeLogging_ = SAFELOG_SCRUB_ALL;
+  tt_str_op(safe_str_client(not_names[0]), OP_EQ, "[scrubbed]");
+  tt_str_op(safe_str_client(names[0]), OP_EQ, "[scrubbed]");
+
+ done:
+  ;
+}
+
+/** A request for a registered name becomes a request for the address that
+ * the registry gives it; a request for any other name is refused. */
+static void
+test_dark_client_resolves_names(void *arg)
+{
+  (void)arg;
+  or_options_t *options = get_options_mutable();
+  entry_connection_t *conn = NULL;
+
+  use_names_directory("dark_client_resolves_names");
+  options->DarkNamesRootKey = tor_strdup(DARK_VECTOR_ROOT_KEY);
+  write_snapshot_file(DARK_VECTOR_VALID);
+  addressmap_init();
+  hs_cache_init();
+
+  /* A name, with a sub-domain that is dropped as one of an address is. */
+  conn = entry_connection_new(CONN_TYPE_AP, AF_INET);
+  conn->socks_request->command = SOCKS_COMMAND_CONNECT;
+  conn->socks_request->port = 80;
+  strlcpy(conn->socks_request->address, "www.site.dark",
+          sizeof(conn->socks_request->address));
+  conn->entry_cfg.onion_traffic = 1;
+  ENTRY_TO_CONN(conn)->state = AP_CONN_STATE_SOCKS_WAIT;
+
+  tt_int_op(connection_ap_handshake_rewrite_and_attach(conn, NULL, NULL),
+            OP_EQ, 0);
+  /* It goes on as a request for the service: here, to wait for the
+   * service's descriptor. */
+  tt_str_op(conn->socks_request->address, OP_EQ, DARK_VECTOR_ADDRESS_SHOP);
+  tt_int_op(ENTRY_TO_CONN(conn)->state, OP_EQ, AP_CONN_STATE_RENDDESC_WAIT);
+  tt_assert(ENTRY_TO_EDGE_CONN(conn)->hs_ident);
+
+  MOCK(connection_mark_unattached_ap_, mock_connection_mark_unattached_ap_);
+  MOCK(connection_ap_handshake_socks_resolved,
+       mock_connection_ap_handshake_socks_resolved);
+
+  /* A name that is not registered. */
+  tt_int_op(request_destination(SOCKS_COMMAND_CONNECT, "nosuch.dark", false),
+            OP_EQ, -1);
+  tt_int_op(n_marked_unattached, OP_EQ, 1);
+  tt_int_op(marked_end_reason & END_STREAM_REASON_MASK, OP_EQ,
+            END_STREAM_REASON_RESOLVEFAILED);
+  tt_int_op(n_resolved, OP_EQ, 0);
+
+  /* One that is registered and has expired. */
+  update_approx_time(DARK_VECTOR_CREATED + DARK_VECTOR_DAY);
+  tt_int_op(request_destination(SOCKS_COMMAND_CONNECT, "soon.dark", false),
+            OP_EQ, -1);
+  tt_int_op(marked_end_reason & END_STREAM_REASON_MASK, OP_EQ,
+            END_STREAM_REASON_RESOLVEFAILED);
+  update_approx_time(DARK_VECTOR_CREATED);
+
+  /* A resolve gets "no such name" for an answer. */
+  tt_int_op(request_destination(SOCKS_COMMAND_RESOLVE, "nosuch.dark", false),
+            OP_EQ, -1);
+  tt_int_op(n_resolved, OP_EQ, 1);
+  tt_int_op(resolved_answer_type, OP_EQ, RESOLVED_TYPE_ERROR);
+
+  /* With no snapshot to trust, whether there is such a name is not known,
+   * and the refusal says so by being another one. */
+  tor_free(options->DarkNamesRootKey);
+  tt_int_op(request_destination(SOCKS_COMMAND_CONNECT, "site.dark", false),
+            OP_EQ, -1);
+  tt_int_op(marked_end_reason & END_STREAM_REASON_MASK, OP_EQ,
+            END_STREAM_REASON_INTERNAL);
+  /* Even then a resolve is not answered with a failure. */
+  tt_int_op(request_destination(SOCKS_COMMAND_RESOLVE, "site.dark", false),
+            OP_EQ, -1);
+  tt_int_op(resolved_answer_type, OP_EQ, RESOLVED_TYPE_ERROR);
+
+ done:
+  UNMOCK(connection_mark_unattached_ap_);
+  UNMOCK(connection_ap_handshake_socks_resolved);
+  if (conn)
+    connection_free_minimal(ENTRY_TO_CONN(conn));
+  addressmap_free_all();
+  hs_free_all();
+  darknames_free_all();
 }
 
 #define DARK_TEST(name, flags)                          \
@@ -761,5 +894,7 @@ struct testcase_t dark_tests[] = {
   DARK_TEST(names_rollback, 0),
   DARK_TEST(names_mutations, 0),
   DARK_TEST(names_lookup, TT_FORK),
+  DARK_TEST(names_are_not_logged, TT_FORK),
+  DARK_TEST(client_resolves_names, TT_FORK),
   END_OF_TESTCASES
 };

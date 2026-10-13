@@ -814,9 +814,16 @@ test_parse_extended_hostname(void *arg)
   char address11[] =
     "25njqamcweflpvkl73j4szahhihoc4xt3ktcgjnpaingr5yhkenl5sid.onion";
   char address12[] = "fooaddress.onion";
+  char address13[] = "ab.dark";
+  char address14[] = "a_b.dark";
+  char address15[] = "-ab.dark";
+  char address16[] = "www.ab--cd.dark";
 
-  tt_assert(!parse_extended_hostname(address1, &type));
-  tt_int_op(type, OP_EQ, BAD_HOSTNAME);
+  /* Shorter than a handle and spelled like a name: a registered name, for
+   * all the parser knows. It is left as it came. */
+  tt_assert(parse_extended_hostname(address1, &type));
+  tt_int_op(type, OP_EQ, DARK_NAME_HOSTNAME);
+  tt_str_op(address1, OP_EQ, "fooaddress.dark");
 
   tt_assert(parse_extended_hostname(address3, &type));
   tt_int_op(type, OP_EQ, EXIT_HOSTNAME);
@@ -824,11 +831,14 @@ test_parse_extended_hostname(void *arg)
   tt_assert(parse_extended_hostname(address4, &type));
   tt_int_op(type, OP_EQ, NORMAL_HOSTNAME);
 
-  tt_assert(!parse_extended_hostname(address5, &type));
-  tt_int_op(type, OP_EQ, BAD_HOSTNAME);
+  /* A name with sub-domains is still that name. */
+  tt_assert(parse_extended_hostname(address5, &type));
+  tt_int_op(type, OP_EQ, DARK_NAME_HOSTNAME);
+  tt_str_op(address5, OP_EQ, "foo.abcdefghijklmnop.dark");
 
-  tt_assert(!parse_extended_hostname(address6, &type));
-  tt_int_op(type, OP_EQ, BAD_HOSTNAME);
+  tt_assert(parse_extended_hostname(address6, &type));
+  tt_int_op(type, OP_EQ, DARK_NAME_HOSTNAME);
+  tt_str_op(address6, OP_EQ, "foo.bar.abcdefghijklmnop.dark");
 
   tt_assert(!parse_extended_hostname(address7, &type));
   tt_int_op(type, OP_EQ, BAD_HOSTNAME);
@@ -854,6 +864,16 @@ test_parse_extended_hostname(void *arg)
             "25njqamcweflpvkl73j4szahhihoc4xt3ktcgjnpaingr5yhkenl5sid.onion");
 
   tt_assert(!parse_extended_hostname(address12, &type));
+  tt_int_op(type, OP_EQ, BAD_HOSTNAME);
+
+  /* Neither a handle nor a name that could be registered. */
+  tt_assert(!parse_extended_hostname(address13, &type));
+  tt_int_op(type, OP_EQ, BAD_HOSTNAME);
+  tt_assert(!parse_extended_hostname(address14, &type));
+  tt_int_op(type, OP_EQ, BAD_HOSTNAME);
+  tt_assert(!parse_extended_hostname(address15, &type));
+  tt_int_op(type, OP_EQ, BAD_HOSTNAME);
+  tt_assert(!parse_extended_hostname(address16, &type));
   tt_int_op(type, OP_EQ, BAD_HOSTNAME);
 
  done: ;
