@@ -1041,9 +1041,19 @@ test_sr_get_majority_srv_from_votes(void *arg)
    * the consensus params of number of agreements needed. */
   sr_state_set_fresh_srv();
 
-  /* The test relies on the dirauth list being initialized. */
+  /* The test relies on the dirauth list being initialized. No authorities
+   * are built in, so add the nine that the vote counts below assume. */
   clear_dir_servers();
-  add_default_trusted_dir_authorities(V3_DIRINFO);
+  for (int i = 1; i <= 9; i++) {
+    char *line = NULL;
+    tor_asprintf(&line,
+                 "test%d orport=9001 v3ident=%040d 127.0.0.%d:9030 %040d",
+                 i, i, i, i);
+    int rv = parse_dir_authority_line(line, NO_DIRINFO, 0);
+    tor_free(line);
+    tt_int_op(rv, OP_EQ, 0);
+  }
+  tt_int_op(get_n_authorities(V3_DIRINFO), OP_EQ, 9);
 
   { /* Prepare voting environment with just a single vote. */
     networkstatus_t *vote = get_test_vote_with_curr_srv(SRV_1);

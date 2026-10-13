@@ -107,6 +107,11 @@ tor_process = subprocess.Popen([tor_path,
                                '-Log', 'debug stdout',
                                '-LogTimeGranularity', '1',
                                '-FetchServerDescriptors', '0',
+                               # There are no built-in authorities, and tor
+                               # will not start with the network on and none.
+                               '-DirAuthority',
+                               'test orport=1 v3ident=' + 'F' * 40 +
+                               ' 127.0.0.1:1 ' + 'F' * 40,
                                '-f', empty_torrc_path,
                                '--defaults-torrc', empty_defaults_torrc_path,
                                ],

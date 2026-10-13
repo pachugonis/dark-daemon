@@ -347,6 +347,16 @@ test_bwmgt_dir_conn_global_write_low(void *arg)
   ret = consider_adding_dir_servers(&mock_options, &mock_options);
   tt_int_op(ret, OP_EQ, 0);
 
+  /* No authorities are built in, so add one with the IPv4 and IPv6 addresses
+   * that are tested as authority addresses below. */
+  ret = parse_dir_authority_line(
+          "test orport=9001 "
+          "v3ident=0000000000000000000000000000000000000001 "
+          "ipv6=[2001:638:a000:4140::ffff:189]:9001 "
+          "128.31.0.39:9030 0000000000000000000000000000000000000002",
+          NO_DIRINFO, 0);
+  tt_int_op(ret, OP_EQ, 0);
+
   /* This will make the nodelist bloom filter very large
    * (the_nodelist->node_addrs) so we will fail the contain test rarely. */
   addr_per_node = 1024;
@@ -400,14 +410,14 @@ test_bwmgt_dir_conn_global_write_low(void *arg)
   ret = connection_dir_is_global_write_low(conn, INT_MAX);
   tt_int_op(ret, OP_EQ, 1);
 
-  /* Now, lets try with a connection address from moria1. It should always
-   * pass even though our limit is too low. */
+  /* Now, lets try with a connection address from the authority. It should
+   * always pass even though our limit is too low. */
   addr_family = tor_addr_parse(&conn->addr, "128.31.0.39");
   tt_int_op(addr_family, OP_EQ, AF_INET);
   ret = connection_dir_is_global_write_low(conn, INT_MAX);
   tt_int_op(ret, OP_EQ, 0);
 
-  /* IPv6 testing of gabelmoo. */
+  /* IPv6 testing of the authority. */
   addr_family = tor_addr_parse(&conn->addr, "[2001:638:a000:4140::ffff:189]");
   tt_int_op(addr_family, OP_EQ, AF_INET6);
   ret = connection_dir_is_global_write_low(conn, INT_MAX);

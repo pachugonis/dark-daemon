@@ -2130,6 +2130,15 @@ options_act,(const or_options_t *old_options))
     return -1;
   }
 
+  /* There are no built-in authorities, so without configured ones we could
+   * never validate a consensus. Say so, rather than idling at 0% forever. */
+  if (running_tor && !options->DisableNetwork &&
+      get_n_authorities(V3_DIRINFO) == 0) {
+    log_err(LD_CONFIG, "No directory authorities are configured, and this "
+            "build has none built in. Set DirAuthority to join a network.");
+    return -1;
+  }
+
   if (hs_service_non_anonymous_mode_enabled(options)) {
     log_warn(LD_GENERAL, "This copy of Tor was compiled or configured to run "
              "in a non-anonymous mode. It will provide NO ANONYMITY.");
