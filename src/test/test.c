@@ -630,6 +630,7 @@ struct testgroup_t testgroups[] = {
   { "crypto/pem/", pem_tests },
   { "crypto/rng/", crypto_rng_tests },
   { "crypto/cgo/", crypto_cgo_tests },
+  { "dark/", dark_tests },
   { "dir/", dir_tests },
   { "dir/auth/ports/", dirauth_port_tests },
   { "dir/auth/process_descs/", process_descs_tests },

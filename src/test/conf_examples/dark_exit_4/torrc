@@ -1,0 +1,2 @@
+# This network has no exit relays, so an exit policy may not accept anything.
+ExitPolicy accept *:80,reject *:*

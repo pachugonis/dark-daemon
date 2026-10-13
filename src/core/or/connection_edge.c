@@ -4205,6 +4205,14 @@ connection_exit_begin_conn(const relay_msg_t *msg, circuit_t *circ)
     return 0;
   }
 
+  /* This network has no exits. On an OR circuit a relay serves BEGIN_DIR and
+   * nothing else; streams to a hidden service arrive on an origin circuit. */
+  if (or_circ && msg->command != RELAY_COMMAND_BEGIN_DIR) {
+    relay_send_end_cell_from_edge(msg->stream_id, circ,
+                                  END_STREAM_REASON_EXITPOLICY, NULL);
+    return 0;
+  }
+
   rv = begin_cell_parse(msg, &bcell, &end_reason);
   if (rv < -1) {
     return -END_CIRC_REASON_TORPROTOCOL;
@@ -4382,65 +4390,19 @@ connection_exit_begin_conn(const relay_msg_t *msg, circuit_t *circ)
 
 /**
  * Called when we receive a RELAY_COMMAND_RESOLVE cell 'cell' along the
- * circuit <b>circ</b>;
- * begin resolving the hostname, and (eventually) reply with a RESOLVED cell.
+ * circuit <b>circ</b>. This network has no exits, so refuse it with an END
+ * cell.
  *
- * Return -(some circuit end reason) if we want to tear down <b>circ</b>.
- * Else return 0.
+ * Return 0: the circuit is left open.
  */
 int
 connection_exit_begin_resolve(const relay_msg_t *msg, or_circuit_t *circ)
 {
-  edge_connection_t *dummy_conn;
-  dos_stream_defense_type_t dos_defense_type;
-
   assert_circuit_ok(TO_CIRCUIT(circ));
 
-  /* Note the RESOLVE stream as seen. */
-  rep_hist_note_exit_stream(RELAY_COMMAND_RESOLVE);
-
-  /* This 'dummy_conn' only exists to remember the stream ID
-   * associated with the resolve request; and to make the
-   * implementation of dns.c more uniform.  (We really only need to
-   * remember the circuit, the stream ID, and the hostname to be
-   * resolved; but if we didn't store them in a connection like this,
-   * the housekeeping in dns.c would get way more complicated.)
-   */
-  dummy_conn = edge_connection_new(CONN_TYPE_EXIT, AF_INET);
-  dummy_conn->stream_id = msg->stream_id;
-  dummy_conn->base_.address = tor_strndup((char *) msg->body, msg->length);
-  dummy_conn->base_.port = 0;
-  dummy_conn->base_.state = EXIT_CONN_STATE_RESOLVEFAILED;
-  dummy_conn->base_.purpose = EXIT_PURPOSE_RESOLVE;
-
-  dummy_conn->on_circuit = TO_CIRCUIT(circ);
-
-  dos_defense_type = dos_stream_new_begin_or_resolve_cell(circ);
-  switch (dos_defense_type) {
-    case DOS_STREAM_DEFENSE_NONE:
-      break;
-    case DOS_STREAM_DEFENSE_REFUSE_STREAM:
-      dns_send_resolved_error_cell(dummy_conn, RESOLVED_TYPE_ERROR_TRANSIENT);
-      connection_free_(TO_CONN(dummy_conn));
-      return 0;
-    case DOS_STREAM_DEFENSE_CLOSE_CIRCUIT:
-      connection_free_(TO_CONN(dummy_conn));
-      return -END_CIRC_REASON_RESOURCELIMIT;
-  }
-
-  /* send it off to the gethostbyname farm */
-  switch (dns_resolve(dummy_conn)) {
-    case -1: /* Impossible to resolve; a resolved cell was sent. */
-      /* Connection freed; don't touch it. */
-      return 0;
-    case 1: /* The result was cached; a resolved cell was sent. */
-      if (!dummy_conn->base_.marked_for_close)
-        connection_free_(TO_CONN(dummy_conn));
-      return 0;
-    case 0: /* resolve added to pending list */
-      assert_circuit_ok(TO_CIRCUIT(circ));
-      break;
-  }
+  /* This network has no exits, so there is nothing to resolve for anyone. */
+  relay_send_end_cell_from_edge(msg->stream_id, TO_CIRCUIT(circ),
+                                END_STREAM_REASON_EXITPOLICY, NULL);
   return 0;
 }
 

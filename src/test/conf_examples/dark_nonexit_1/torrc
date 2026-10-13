@@ -1,0 +1,4 @@
+# Refusing every exit stream is the only policy there is, and saying so
+# explicitly is fine.
+ExitRelay 0
+ExitPolicy reject *:*

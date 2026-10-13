@@ -1157,19 +1157,23 @@ validate_addr_policies(const or_options_t *options, char **msg)
   smartlist_t *addr_policy=NULL;
   *msg = NULL;
 
-  if (policies_parse_exit_policy_from_options(options,0,NULL,&addr_policy)) {
+  if (parse_addr_policy(options->ExitPolicy, &addr_policy, -1))
     REJECT("Error in ExitPolicy entry.");
+
+  /* This network has no exit relays: refuse any attempt to configure one.
+   * At this point addr_policy holds the ExitPolicy entries and nothing
+   * else. */
+  bool exit_policy_accepts = false;
+  if (addr_policy) {
+    SMARTLIST_FOREACH(addr_policy, const addr_policy_t *, p,
+                      if (p->policy_type == ADDR_POLICY_ACCEPT)
+                        exit_policy_accepts = true);
   }
-
-  static int warned_about_nonexit = 0;
-
-  if (public_server_mode(options) && !warned_about_nonexit &&
-      policy_using_default_exit_options(options)) {
-    warned_about_nonexit = 1;
-    log_notice(LD_CONFIG, "By default, Tor does not run as an exit relay. "
-               "If you want to be an exit relay, "
-               "set ExitRelay to 1. To suppress this message in the future, "
-               "set ExitRelay to 0.");
+  if (options->ExitRelay == 1 || options->IPv6Exit ||
+      options->ReducedExitPolicy || exit_policy_accepts) {
+    REJECT("This network has no exit relays. ExitRelay 1, IPv6Exit, "
+           "ReducedExitPolicy and ExitPolicy accept entries are not "
+           "supported.");
   }
 
   /* The rest of these calls *append* to addr_policy. So don't actually
@@ -2097,29 +2101,9 @@ policies_copy_outbound_addresses_to_smartlist(smartlist_t *addr_list,
   }
 }
 
-/** Parse <b>ExitPolicy</b> member of <b>or_options</b> into <b>result</b>
- * smartlist.
- * If <b>or_options->IPv6Exit</b> is false, prepend an entry that
- * rejects all IPv6 destinations.
- *
- * If <b>or_options->ExitPolicyRejectPrivate</b> is true:
- *  - prepend an entry that rejects all destinations in all netblocks reserved
- *    for private use.
- *  - if ipv4_local_address is non-zero, treat it as a host-order IPv4 address,
- *    and add it to the list of configured addresses.
- *  - if ipv6_local_address is non-NULL, and not the null tor_addr_t, add it
- *    to the list of configured addresses.
- * If <b>or_options->ExitPolicyRejectLocalInterfaces</b> is true:
- *  - if or_options->OutboundBindAddresses[][0] (=IPv4) is not the null
- *    tor_addr_t, add it to the list of configured addresses.
- *  - if or_options->OutboundBindAddresses[][1] (=IPv6) is not the null
- *    tor_addr_t, add it to the list of configured addresses.
- *
- * If <b>or_options->BridgeRelay</b> is false, append entries of default
- * Tor exit policy into <b>result</b> smartlist.
- *
- * If or_options->ExitRelay is false, or is auto without specifying an exit
- * policy, then make our exit policy into "reject *:*" regardless.
+/** Set <b>result</b> to the exit policy of this relay, which is always
+ * "reject *:*": this network has no exits. The options and local addresses
+ * are not consulted; the parameters are kept for the sake of the callers.
  */
 int
 policies_parse_exit_policy_from_options(const or_options_t *or_options,
@@ -2127,59 +2111,16 @@ policies_parse_exit_policy_from_options(const or_options_t *or_options,
                                         const tor_addr_t *ipv6_local_address,
                                         smartlist_t **result)
 {
-  exit_policy_parser_cfg_t parser_cfg = 0;
-  smartlist_t *configured_addresses = NULL;
-  int rv = 0;
+  (void)or_options;
+  (void)ipv4_local_address;
+  (void)ipv6_local_address;
 
-  /* Short-circuit for non-exit relays, or for relays where we didn't specify
-   * ExitPolicy or ReducedExitPolicy or IPv6Exit and ExitRelay is auto. */
-  if (or_options->ExitRelay == 0 ||
-      policy_using_default_exit_options(or_options)) {
-    append_exit_policy_string(result, "reject *4:*");
-    append_exit_policy_string(result, "reject *6:*");
-    return 0;
-  }
-
-  configured_addresses = smartlist_new();
-
-  /* Configure the parser */
-  if (or_options->IPv6Exit) {
-    parser_cfg |= EXIT_POLICY_IPV6_ENABLED;
-  }
-
-  if (or_options->ExitPolicyRejectPrivate) {
-    parser_cfg |= EXIT_POLICY_REJECT_PRIVATE;
-  }
-
-  if (!or_options->BridgeRelay) {
-    if (or_options->ReducedExitPolicy)
-      parser_cfg |= EXIT_POLICY_ADD_REDUCED;
-    else
-      parser_cfg |= EXIT_POLICY_ADD_DEFAULT;
-  }
-
-  if (or_options->ExitPolicyRejectLocalInterfaces) {
-    parser_cfg |= EXIT_POLICY_REJECT_LOCAL_INTERFACES;
-  }
-
-  /* Copy the configured addresses into the tor_addr_t* list */
-  if (or_options->ExitPolicyRejectPrivate) {
-    policies_copy_addr_to_smartlist(configured_addresses, ipv4_local_address);
-    policies_copy_addr_to_smartlist(configured_addresses, ipv6_local_address);
-  }
-
-  if (or_options->ExitPolicyRejectLocalInterfaces) {
-    policies_copy_outbound_addresses_to_smartlist(configured_addresses,
-                                                  or_options);
-  }
-
-  rv = policies_parse_exit_policy(or_options->ExitPolicy, result, parser_cfg,
-                                  configured_addresses);
-
-  SMARTLIST_FOREACH(configured_addresses, tor_addr_t *, a, tor_free(a));
-  smartlist_free(configured_addresses);
-
-  return rv;
+  /* This network has no exits, so the policy is reject-all whatever the
+   * options say. validate_addr_policies() refuses exit options outright;
+   * this keeps the policy right on any path that skips validation. */
+  append_exit_policy_string(result, "reject *4:*");
+  append_exit_policy_string(result, "reject *6:*");
+  return 0;
 }
 
 /** Add "reject *:*" to the end of the policy in *<b>dest</b>, allocating

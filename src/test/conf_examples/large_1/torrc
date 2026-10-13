@@ -65,11 +65,11 @@ EntryStatistics 1
 ExcludeExitNodes blaznort,kriffid,zeppelin
 ExcludeNodes 128.66.7.6
 ExitNodes 128.66.7.7,128.66.128.0/17,exitexit
-ExitPolicy accept *:80,reject *:*
+ExitPolicy reject *:*
 ExitPolicyRejectLocalInterfaces 1
 ExitPolicyRejectPrivate 0
 ExitPortStatistics 1
-ExitRelay 1
+ExitRelay 0
 ExtendAllowPrivateAddresses 1
 ExtendByEd25519ID 1
 ExtORPort 99
@@ -87,7 +87,6 @@ GeoIPFile /geoip
 GuardfractionFile /gff
 GuardLifetime 8 days
 HeartbeatPeriod 45 minutes
-IPv6Exit 1
 KeepalivePeriod 9 minutes
 KeyDirectory /keyz
 KISTSchedRunInterval 1 msec

@@ -126,6 +126,7 @@ extern struct testcase_t crypto_cgo_tests[];
 extern struct testcase_t crypto_tests[];
 extern struct testcase_t dirauth_port_tests[];
 extern struct testcase_t dir_handle_get_tests[];
+extern struct testcase_t dark_tests[];
 extern struct testcase_t dir_tests[];
 extern struct testcase_t dirvote_tests[];
 extern struct testcase_t dispatch_tests[];

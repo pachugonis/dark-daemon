@@ -1,0 +1,2 @@
+# This network has no exit relays, so we refuse to be configured as one.
+ExitRelay 1
