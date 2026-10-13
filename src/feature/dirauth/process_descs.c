@@ -19,6 +19,7 @@
 
 #include "app/config/config.h"
 #include "core/or/policies.h"
+#include "core/or/protover.h"
 #include "core/or/versions.h"
 #include "feature/dirauth/dirauth_sys.h"
 #include "feature/dirauth/keypin.h"
@@ -308,6 +309,19 @@ dirserv_router_get_status(const routerinfo_t *router, const char **msg,
     log_warn(LD_BUG,"Error computing fingerprint");
     if (msg)
       *msg = "Bug: Error computing fingerprint";
+    return RTR_REJECT;
+  }
+
+  /* Only relays built for this network may join it. Check this before
+   * anything else: the checks below return early for a listed router. */
+  if (!router->protocol_list ||
+      !protocol_list_supports_protocol(router->protocol_list, PRT_DARK, 1)) {
+    log_fn(severity, LD_DIR,
+           "Descriptor from router %s (platform %s) "
+           "does not list the Dark=1 protocol.",
+           router_describe(router), router->platform);
+    if (msg)
+      *msg = "Not a Dark relay: the descriptor does not list Dark=1.";
     return RTR_REJECT;
   }
 

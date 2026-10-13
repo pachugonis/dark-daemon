@@ -56,6 +56,7 @@ static const struct {
   { PRT_CONS, "Cons" },
   { PRT_FLOWCTRL, "FlowCtrl"},
   { PRT_CONFLUX, "Conflux"},
+  { PRT_DARK, "Dark" },
 };
 
 #define N_PROTOCOL_NAMES ARRAY_LENGTH(PROTOCOL_NAMES)
@@ -389,6 +390,8 @@ protocol_list_supports_protocol_or_later(const char *list,
 /* All protocol version that this version of tor supports. */
 #define PR_CONFLUX_V   "1"
 #define PR_CONS_V      "1-2"
+/* Marks this network: no other implementation of the protocol lists it. */
+#define PR_DARK_V      "1"
 #define PR_DESC_V      "1-4"
 #define PR_DIRCACHE_V  "2"
 #define PR_FLOWCTRL_V  "1-2"
@@ -409,6 +412,7 @@ protover_get_supported(const protocol_type_t type)
   switch (type) {
   case PRT_CONFLUX: return PR_CONFLUX_V;
   case PRT_CONS: return PR_CONS_V;
+  case PRT_DARK: return PR_DARK_V;
   case PRT_DESC: return PR_DESC_V;
   case PRT_DIRCACHE: return PR_DIRCACHE_V;
   case PRT_FLOWCTRL: return PR_FLOWCTRL_V;
@@ -472,6 +476,7 @@ protover_get_supported_protocols(void)
   return
     "Conflux=" PR_CONFLUX_V " "
     "Cons=" PR_CONS_V " "
+    "Dark=" PR_DARK_V " "
     "Desc=" PR_DESC_V " "
     "DirCache=" PR_DIRCACHE_V " "
     "FlowCtrl=" PR_FLOWCTRL_V " "
@@ -519,6 +524,7 @@ protover_get_recommended_client_protocols(void)
 {
   return
     "Cons=2 "
+    "Dark=1 "
     "Desc=2-4 "
     "DirCache=2 "
     "FlowCtrl=1-2 "
@@ -537,6 +543,7 @@ protover_get_recommended_relay_protocols(void)
 {
   return
     "Cons=2 "
+    "Dark=1 "
     "Desc=2-4 "
     "DirCache=2 "
     "FlowCtrl=1-2 "
@@ -556,6 +563,7 @@ protover_get_required_client_protocols(void)
 {
   return
     "Cons=2 "
+    "Dark=1 "
     "Desc=2 "
     "FlowCtrl=1 "
     "Link=4 "
@@ -570,6 +578,7 @@ protover_get_required_relay_protocols(void)
 {
   return
     "Cons=2 "
+    "Dark=1 "
     "Desc=2 "
     "DirCache=2 "
     "FlowCtrl=1-2 "

@@ -83,6 +83,7 @@ typedef enum protocol_type_t {
   PRT_PADDING   = 10,
   PRT_FLOWCTRL  = 11,
   PRT_CONFLUX   = 12,
+  PRT_DARK      = 13,
 } protocol_type_t;
 
 bool protover_list_is_invalid(const char *s);

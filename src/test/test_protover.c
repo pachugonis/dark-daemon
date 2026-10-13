@@ -840,6 +840,32 @@ test_protover_summarize_flags(void *args)
   ;
 }
 
+/* The Dark protocol marks this network: we support it, and the authorities
+ * require it of every client and relay. */
+static void
+test_protover_dark_marker(void *arg)
+{
+  (void)arg;
+  char *missing = NULL;
+
+  tt_assert(protocol_list_supports_protocol(protover_get_supported_protocols(),
+                                            PRT_DARK, 1));
+  tt_assert(protocol_list_supports_protocol(
+                 protover_get_required_client_protocols(), PRT_DARK, 1));
+  tt_assert(protocol_list_supports_protocol(
+                 protover_get_required_relay_protocols(), PRT_DARK, 1));
+
+  tt_assert(protover_all_supported("Dark=1", &missing));
+  tt_ptr_op(missing, OP_EQ, NULL);
+
+  /* There is only one version of it. */
+  tt_assert(! protover_all_supported("Dark=2", &missing));
+  tt_str_op(missing, OP_EQ, "Dark=2");
+
+ done:
+  tor_free(missing);
+}
+
 #define PV_TEST(name, flags)                       \
   { #name, test_protover_ ##name, (flags), NULL, NULL }
 
@@ -854,6 +880,7 @@ struct testcase_t protover_tests[] = {
   PV_TEST(supported_protocols, 0),
   PV_TEST(vote_roundtrip, 0),
   PV_TEST(vote_roundtrip_ours, 0),
+  PV_TEST(dark_marker, 0),
   /* fork, because we memoize flags internally */
   PV_TEST(summarize_flags, TT_FORK),
   END_OF_TESTCASES

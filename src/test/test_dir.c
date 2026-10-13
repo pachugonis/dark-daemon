@@ -7154,6 +7154,7 @@ test_dir_dirserv_router_get_status(void *arg)
   ri->platform = tor_strdup("0.4.0.1-alpha");
   ri->nickname = tor_strdup("Jessica");
   ri->identity_pkey = crypto_pk_dup_key(pk);
+  ri->protocol_list = tor_strdup(protover_get_supported_protocols());
 
   curve25519_keypair_t ri_onion_keypair;
   curve25519_keypair_generate(&ri_onion_keypair, 0);
@@ -7205,6 +7206,27 @@ test_dir_dirserv_router_get_status(void *arg)
   ret = dirserv_router_get_status(ri, &msg, LOG_INFO);
   tt_int_op(ret, OP_EQ, RTR_REJECT);
   RESET_FP_LIST(list);
+
+  /* A router that does not list the Dark protocol is rejected... */
+  tor_free(ri->protocol_list);
+  ri->protocol_list = tor_strdup("Cons=1-2 Desc=1-4 Link=3-5 Relay=2-6");
+  msg = NULL;
+  ret = dirserv_router_get_status(ri, &msg, LOG_INFO);
+  tt_int_op(ret, OP_EQ, RTR_REJECT);
+  tt_str_op(msg, OP_EQ,
+            "Not a Dark relay: the descriptor does not list Dark=1.");
+
+  /* ...even when a status is listed for its fingerprint, which makes the
+   * later checks return that status early... */
+  add_rsa_fingerprint_to_dir(fp, list, RTR_INVALID);
+  ret = dirserv_router_get_status(ri, &msg, LOG_INFO);
+  tt_int_op(ret, OP_EQ, RTR_REJECT);
+  RESET_FP_LIST(list);
+
+  /* ...and so is one with no protocol list at all. */
+  tor_free(ri->protocol_list);
+  ret = dirserv_router_get_status(ri, &msg, LOG_INFO);
+  tt_int_op(ret, OP_EQ, RTR_REJECT);
 
  done:
   dirserv_free_fingerprint_list();
