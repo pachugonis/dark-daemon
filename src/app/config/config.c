@@ -2159,12 +2159,14 @@ options_act,(const or_options_t *old_options))
     return -1;
   }
 
-  /* There are no built-in authorities, so without configured ones we could
-   * never validate a consensus. Say so, rather than idling at 0% forever. */
+  /* Without a v3 authority we could never validate a consensus: when
+   * DirAuthority lists none, or when the built-in list is empty. Say so,
+   * rather than idling at 0% forever. */
   if (running_tor && !options->DisableNetwork &&
       get_n_authorities(V3_DIRINFO) == 0) {
-    log_err(LD_CONFIG, "No directory authorities are configured, and this "
-            "build has none built in. Set DirAuthority to join a network.");
+    log_err(LD_CONFIG, "No directory authorities are configured. Set "
+            "DirAuthority with a v3ident, or leave it unset to use the "
+            "built-in ones.");
     return -1;
   }
 

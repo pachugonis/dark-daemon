@@ -2003,10 +2003,10 @@ test_config_adding_default_trusted_dir_servers(void *arg)
   tt_int_op(get_n_authorities(BRIDGE_DIRINFO), OP_EQ, 0);
   tt_int_op(smartlist_len(router_get_fallback_dir_servers()), OP_EQ, 0);
 
-  /* There are no built-in V3 authorities: in particular, none of Tor's */
+  /* The three authorities of the Dark network, each also a fallback */
   add_default_trusted_dir_authorities(V3_DIRINFO);
-  tt_int_op(get_n_authorities(V3_DIRINFO), OP_EQ, 0);
-  tt_int_op(smartlist_len(router_get_fallback_dir_servers()), OP_EQ, 0);
+  tt_int_op(get_n_authorities(V3_DIRINFO), OP_EQ, 3);
+  tt_int_op(smartlist_len(router_get_fallback_dir_servers()), OP_EQ, 3);
 
  done:
   clear_dir_servers();
@@ -3840,6 +3840,71 @@ test_config_adding_dir_servers(void *arg)
   UNMOCK(add_default_fallback_dir_servers);
 }
 
+/* The authorities this build trusts by default: exactly Dark's, as the key
+ * ceremony wrote them, and none of the Tor network's. */
+static void
+test_config_builtin_authorities_are_dark(void *arg)
+{
+  static const struct {
+    const char *nickname, *address, *v3ident, *fingerprint;
+  } dark[] = {
+    { "da1", "199.195.193.79", "B092166F004CDE5BEE54FAC344396BA2D45033F4",
+      "AF7A8D6FDEF48968395AEE9C98C5E7F55C09B3C2" },
+    { "da2", "213.155.11.233", "08031054A8EACC58E16E8C32728F6E9E5C277B49",
+      "1B67F55D197E6C702C4A9360C0A1F0B3D09F800F" },
+    { "da3", "194.76.139.113", "1BCAC393112982949F1CAE4F794467A4BBABED38",
+      "481A4261058A659BCA4FF37F0482F876CBC78DF7" },
+  };
+  /* The identity fingerprints of the Tor network's authorities, as the last
+   * upstream auth_dirs.inc before Dark listed them. */
+  static const char *tor[] = {
+    "1A25C6358DB91342AA51720A5038B72742732498", /* moria1 */
+    "FAA4BCA4A6AC0FB4CA2F8AD5A11D9E122BA894F6", /* tor26 */
+    "7EA6EAD6FD83083C538F44038BBFA077587DD755", /* dizum */
+    "BA44A889E64B93FAA2B114E02C2A279A8555C533", /* Serge */
+    "F2044413DAC2E02E3D6BCF4735A19BCA1DE97281", /* gabelmoo */
+    "7BE683E65D48141321C5ED92F075C55364AC7123", /* dannenberg */
+    "BD6A829255CB08E66FBE7D3748363586E46B3810", /* maatuska */
+    "74A910646BCEEFBCD2E874FC1DC997430F968145", /* longclaw */
+    "24E2F139121D4394C54B5BCC368B3B411857C413", /* bastet */
+    "E3E42D35F801C9D5AB23584E0025D56FE2B33396", /* faravahar */
+  };
+  char hex[HEX_DIGEST_LEN+1];
+  const smartlist_t *trusted;
+  (void)arg;
+
+  clear_dir_servers();
+  routerlist_free_all();
+  add_default_trusted_dir_authorities(NO_DIRINFO);
+
+  trusted = router_get_trusted_dir_servers();
+  tt_int_op(smartlist_len(trusted), OP_EQ, ARRAY_LENGTH(dark));
+  for (size_t i = 0; i < ARRAY_LENGTH(dark); i++) {
+    const dir_server_t *ds = smartlist_get(trusted, i);
+    tt_str_op(ds->nickname, OP_EQ, dark[i].nickname);
+    tt_str_op(fmt_addr(&ds->ipv4_addr), OP_EQ, dark[i].address);
+    tt_int_op(ds->ipv4_orport, OP_EQ, 9001);
+    tt_int_op(ds->ipv4_dirport, OP_EQ, 9030);
+    tt_assert(ds->is_authority);
+    tt_assert(ds->type & V3_DIRINFO);
+    tt_assert(!(ds->type & BRIDGE_DIRINFO));
+    base16_encode(hex, sizeof(hex), ds->v3_identity_digest, DIGEST_LEN);
+    tt_str_op(hex, OP_EQ, dark[i].v3ident);
+    base16_encode(hex, sizeof(hex), ds->digest, DIGEST_LEN);
+    tt_str_op(hex, OP_EQ, dark[i].fingerprint);
+  }
+
+  SMARTLIST_FOREACH_BEGIN(trusted, const dir_server_t *, ds) {
+    base16_encode(hex, sizeof(hex), ds->digest, DIGEST_LEN);
+    for (size_t i = 0; i < ARRAY_LENGTH(tor); i++)
+      tt_str_op(hex, OP_NE, tor[i]);
+  } SMARTLIST_FOREACH_END(ds);
+
+ done:
+  clear_dir_servers();
+  routerlist_free_all();
+}
+
 static void
 test_config_default_dir_servers(void *arg)
 {
@@ -3858,8 +3923,8 @@ test_config_default_dir_servers(void *arg)
   or_options_free(opts);
   opts = NULL;
 
-  /* no authorities are built in yet, and Tor's must never come back */
-  tt_int_op(trusted_count, OP_EQ, 0);
+  /* the three authorities of the Dark network, and nothing else */
+  tt_int_op(trusted_count, OP_EQ, 3);
   /* if we disable the default fallbacks, there must not be any extra */
   tt_assert(fallback_count == trusted_count);
 
@@ -3871,8 +3936,8 @@ test_config_default_dir_servers(void *arg)
   or_options_free(opts);
   opts = NULL;
 
-  /* no authorities are built in yet, and Tor's must never come back */
-  tt_int_op(trusted_count, OP_EQ, 0);
+  /* the three authorities of the Dark network, and nothing else */
+  tt_int_op(trusted_count, OP_EQ, 3);
   /* XX/teor - allow for default fallbacks to be added without breaking
    * the unit tests. Set a minimum fallback count once the list is stable. */
   tt_assert(fallback_count >= trusted_count);
@@ -7002,6 +7067,7 @@ struct testcase_t config_tests[] = {
   CONFIG_TEST(parsing_invalid_dir_address, 0),
   CONFIG_TEST(parsing_fallback_dir_server, 0),
   CONFIG_TEST(adding_default_trusted_dir_servers, TT_FORK),
+  CONFIG_TEST(builtin_authorities_are_dark, TT_FORK),
   CONFIG_TEST(adding_dir_servers, TT_FORK),
   CONFIG_TEST(default_dir_servers, TT_FORK),
   CONFIG_TEST(default_fallback_dirs, 0),
