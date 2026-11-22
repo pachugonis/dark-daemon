@@ -20,6 +20,12 @@
 #define DARKNAME_MIN_LEN 3
 #define DARKNAME_MAX_LEN 32
 
+/** The root key of the registry that this build trusts, in base64. Names
+ * resolve against it where DarkNamesRootKey is not set; the option still
+ * overrides it, which is how test networks keep working. */
+#define DARKNAMES_BUILTIN_ROOT_KEY \
+  "tLxKkReE2NoOb4S7PU0pbERDz6uQzFzdWD9pxA4weSc"
+
 /** What became of looking a name up. */
 typedef enum darkname_result_t {
   /** The name is registered, and here is the address it points to. */

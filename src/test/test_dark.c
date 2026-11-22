@@ -403,6 +403,9 @@ test_dark_names_validity(void *arg)
   for (unsigned i = 0; i < ARRAY_LENGTH(invalid); ++i)
     tt_assert(!darknames_name_is_valid(invalid[i]));
 
+  tt_str_op(DARKNAMES_BUILTIN_ROOT_KEY, OP_EQ,
+            "tLxKkReE2NoOb4S7PU0pbERDz6uQzFzdWD9pxA4weSc");
+  tt_assert(darknames_root_key_is_valid(DARKNAMES_BUILTIN_ROOT_KEY));
   tt_assert(darknames_root_key_is_valid(DARK_VECTOR_ROOT_KEY));
   tt_assert(!darknames_root_key_is_valid(""));
   tt_assert(!darknames_root_key_is_valid(DARK_VECTOR_ROOT_KEY "="));
@@ -689,7 +692,7 @@ test_dark_names_lookup(void *arg)
 
   use_names_directory("dark_names_lookup");
 
-  /* No root key: nothing resolves, whatever is on the disk. */
+  /* The built-in root key does not vouch for the test-vector snapshot. */
   write_snapshot_file(DARK_VECTOR_VALID);
   tt_int_op(darknames_lookup("site", address), OP_EQ, DARKNAME_UNAVAILABLE);
 
@@ -703,6 +706,10 @@ test_dark_names_lookup(void *arg)
   accepted = read_file_to_str(fname, RFTS_BIN, NULL);
   tt_assert(accepted);
   tt_str_op(accepted, OP_EQ, "13 1800000000\n");
+
+  /* The built-in key rejected the vector snapshot above, and that was logged;
+   * step past the rate limit so that the next rejection is logged too. */
+  update_approx_time(DARK_VECTOR_CREATED + 3601);
 
   /* Files that are not what the registry signed, or not a snapshot at all,
    * leave us with what we had. */

@@ -40,11 +40,6 @@
 #include <sys/stat.h>
 #endif
 
-/** The root key of the registry that this build trusts, in base64, or NULL
- * if it has none. It is set once the registry's keys have been made; until
- * then names resolve only where DarkNamesRootKey is configured. */
-#define DARKNAMES_BUILTIN_ROOT_KEY NULL
-
 /** How often, in seconds, we look whether the snapshot file has changed. */
 #define DARKNAMES_CHECK_INTERVAL 60
 
