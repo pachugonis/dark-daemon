@@ -1713,6 +1713,10 @@ options_start_listener_transaction(const or_options_t *old_options,
       goto rollback;
     }
   }
+
+  /* Write control ports to disk now that the listeners have their ports. */
+  control_ports_write_to_file();
+
   if (options->DisableNetwork) {
     /* Aggressively close non-controller stuff, NOW */
     log_notice(LD_NET, "DisableNetwork is set. Tor will not make or accept "
@@ -2140,9 +2144,6 @@ options_act,(const or_options_t *old_options))
       warned_debugger_attach = 1;
     }
   }
-
-  /* Write control ports to disk as appropriate */
-  control_ports_write_to_file();
 
   if (running_tor && !have_lockfile()) {
     if (try_locking(options, 1) < 0)
