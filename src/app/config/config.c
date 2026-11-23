@@ -396,6 +396,7 @@ static const config_var_t option_vars_[] = {
   VPORT(ControlPort),
   V(ControlPortFileGroupReadable,BOOL,     "0"),
   V(ControlPortWriteToFile,      FILENAME, NULL),
+  VAR_NODUMP("__ControlPortWriteToFile", FILENAME, ControlPortWriteToFile, NULL),
   V(ControlSocket,               LINELIST, NULL),
   V(ControlSocketsGroupWritable, BOOL,     "0"),
   V(UnixSocksGroupWritable,    BOOL,     "0"),
